@@ -1,0 +1,736 @@
+/* =========================================================
+   Javi — Polished UI Theme (Light + Dark)
+   Drop-in replacement for your existing class names.
+   ========================================================= */
+
+/* ---------- Design tokens ---------- */
+:root{
+  /* base */
+  --bg: #ffffff;
+  --panel: #ffffff;
+  --text: #0f172a;         /* slate-900 */
+  --muted: #64748b;        /* slate-500 */
+  --border: #e5e7eb;       /* gray-200 */
+
+  /* interactive */
+  --btn: #0f172a;
+  --btnText: #ffffff;
+  --btn2: transparent;
+  --btn2Text: #0f172a;
+  --danger: #dc2626;
+
+  /* elevation + rounding */
+  --radius-sm: 12px;
+  --radius: 18px;
+  --radius-lg: 22px;
+
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow-sm: 0 6px 18px rgba(15, 23, 42, .08);
+  --shadow-md: 0 14px 34px rgba(15, 23, 42, .12);
+
+  /* focus ring */
+  --focus: rgba(59, 130, 246, .22); /* blue-ish ring */
+  --ring: 0 0 0 4px var(--focus);
+
+  /* surfaces */
+  --surface-1: color-mix(in srgb, var(--bg) 94%, var(--text) 2%);
+  --surface-2: color-mix(in srgb, var(--bg) 90%, var(--text) 3%);
+
+  /* motion */
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --dur: 180ms;
+}
+
+[data-theme="dark"]{
+  --bg:#0b0b10;
+  --panel:#0f0f16;
+  --text:#f4f4f5;
+  --muted:#a1a1aa;
+  --border:#27272a;
+
+  --btn:#f4f4f5;
+  --btnText:#0b0b10;
+  --btn2:transparent;
+  --btn2Text:#f4f4f5;
+  --danger:#ef4444;
+
+  /* softer shadows in dark; lean on borders */
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.35);
+  --shadow-sm: 0 10px 28px rgba(0,0,0,.45);
+  --shadow-md: 0 18px 44px rgba(0,0,0,.55);
+
+  --focus: rgba(96, 165, 250, .22);
+
+  --surface-1: color-mix(in srgb, var(--panel) 92%, #000 8%);
+  --surface-2: color-mix(in srgb, var(--panel) 86%, #000 14%);
+}
+
+/* ---------- Global reset ---------- */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+a{color:inherit; text-decoration:none}
+p{margin:0}
+h1{font-size:26px; margin:0; letter-spacing:-.02em}
+h2{font-size:16px; margin:0; letter-spacing:-.01em}
+
+.muted{color:var(--muted)}
+.small{font-size:12px}
+
+/* ---------- Layout ---------- */
+.container{
+  max-width:1100px;
+  margin:0 auto;
+  padding:16px;
+}
+
+/* ---------- Topbar ---------- */
+.topbar{
+  position: sticky;
+  top:0;
+  z-index:10;
+
+  /* glassy */
+  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 85%, transparent);
+}
+
+.topbarInner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  max-width:1100px;
+  margin:0 auto;
+
+  /* safe-area padding so Javi clears the notification bar */
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px 16px;
+}
+
+.brand{
+  font-weight:800;
+  letter-spacing:-.03em;
+  font-size:18px;
+}
+
+.nav{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+.nav a{
+  font-size:14px;
+  padding:7px 10px;
+  border-radius:999px;
+  border:1px solid transparent;
+  color: color-mix(in srgb, var(--text) 88%, var(--muted));
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.nav a:hover{
+  background: var(--surface-1);
+  border-color: color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.nav a.active{
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* ---------- Buttons ---------- */
+.btn{
+  border:1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  background:var(--btn);
+  color:var(--btnText);
+  padding:9px 12px;
+  border-radius:999px;
+  font-weight:700;
+  font-size:14px;
+  cursor:pointer;
+  transition:
+    transform var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+  box-shadow: var(--shadow-xs);
+}
+
+.btn:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:active{
+  transform: translateY(0);
+  box-shadow: var(--shadow-xs);
+}
+
+.btn.secondary{
+  background:var(--btn2);
+  color:var(--btn2Text);
+  box-shadow:none;
+}
+
+.btn.secondary:hover{
+  background: var(--surface-1);
+  box-shadow:none;
+  transform: translateY(0);
+}
+
+.btn.danger{
+  background:var(--danger);
+  color:#fff;
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--border));
+}
+
+.btn:focus{outline:none; box-shadow: var(--ring), var(--shadow-xs)}
+
+/* ---------- Rows / Grids ---------- */
+.row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.grid{display:grid; gap:12px}
+.grid.two{grid-template-columns: repeat(2, minmax(0, 1fr));}
+
+/* ---------- Cards (soft hover elevation) ---------- */
+.card{
+  border:1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: var(--radius-lg);
+  padding:14px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.card:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: color-mix(in srgb, var(--border) 92%, transparent);
+}
+
+/* ---------- Inputs ---------- */
+.input, .select, .textarea{
+  width:100%;
+  padding:11px 12px;
+  border-radius: 14px;
+  border:1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  color:var(--text);
+  font-size:14px;
+  transition: box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.input:focus, .select:focus, .textarea:focus{
+  outline:none;
+  box-shadow: var(--ring);
+  border-color: color-mix(in srgb, var(--border) 55%, #60a5fa);
+}
+
+.textarea{min-height:90px; resize:vertical}
+
+/* ---------- Badges / Pills ---------- */
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:4px 10px;
+  border-radius:999px;
+  border:1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  font-size:12px;
+  color:var(--text);
+  background: var(--surface-1);
+}
+
+.badge.warn{
+  background: rgba(255,184,77,.16);
+  border:1px solid rgba(255,184,77,.40);
+}
+
+/* ---------- List items ---------- */
+.listItem{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  padding:12px;
+  border-radius: var(--radius);
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: var(--surface-1);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.listItem:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--border) 95%, transparent);
+}
+
+.stack{display:flex; flex-direction:column; gap:6px}
+.kv{font-size:12px; color:var(--muted)}
+hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, transparent); margin:12px 0}
+
+/* ---------- Toast ---------- */
+.toast{
+  position:fixed;
+  left:50%;
+  transform:translateX(-50%);
+  bottom:16px;
+  background: color-mix(in srgb, var(--panel) 86%, var(--text) 6%);
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  display:none;
+  max-width:min(520px, 92vw);
+}
+.toast.show{display:block}
+
+/* =========================================================
+   Calendar (Month view) — keep your existing class names
+   ========================================================= */
+.calHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+.calHeader .row{gap:8px}
+.calTitle{font-weight:800; letter-spacing:-.01em}
+
+.calGrid{
+  display:grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap:8px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding-bottom: 2px;
+}
+
+.calDow{
+  font-size:12px;
+  color:var(--muted);
+  text-align:center;
+  padding:6px 0;
+}
+
+.calDay{
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 14px;
+  padding:8px;
+  min-height:0;
+  aspect-ratio: 1 / 1;
+  background: var(--surface-1);
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  cursor:pointer;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.calDay:hover{
+  background: var(--surface-2);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.calDay.isOtherMonth{opacity:.55}
+
+.calDay.isToday{
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, #60a5fa 55%, transparent), var(--shadow-xs);
+}
+
+.calDayTop{display:flex; align-items:center; justify-content:space-between; gap:8px}
+.calDayNum{font-size:12px; font-weight:900}
+
+.calCount{
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, var(--text) 4%);
+}
+
+.calItems{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  overflow:hidden;
+}
+
+.calItem{
+  font-size:12px;
+  padding:5px 8px;
+  border-radius: 12px;
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.calMore{font-size:12px; color:var(--muted)}
+
+@media (max-width: 860px){
+  .calGrid{ gap:6px; }
+  .calDay{
+    aspect-ratio: auto;
+    padding:7px;
+    min-height:74px;
+  }
+  .calItem{ display:none; } /* tap day to see events */
+}
+
+/* =========================================================
+   Dashboard "Google-ish" Calendar (your existing classes)
+   ========================================================= */
+.gcalToolbar{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+.gcalTitle{font-weight:900; letter-spacing:-.01em}
+.gcalPeriod{font-weight:700; color:var(--muted); margin-left:6px}
+.gcalBody{min-height:120px}
+
+.seg{
+  display:inline-flex;
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius:999px;
+  overflow:hidden;
+  background: var(--surface-1);
+}
+
+.segBtn{
+  border:0;
+  background:transparent;
+  padding:8px 12px;
+  font-weight:800;
+  font-size:13px;
+  color:var(--btn2Text);
+  cursor:pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.segBtn.active{
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 92%, transparent);
+}
+
+.gcalAgenda{margin-bottom:10px}
+.gcalAgendaHeader{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  align-items:baseline;
+  margin-bottom:10px;
+}
+
+.gcalAgendaItem{
+  display:flex;
+  gap:10px;
+  align-items:flex-start;
+  padding:12px;
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  cursor:pointer;
+  margin-bottom:8px;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.gcalAgendaItem:hover{
+  background: var(--surface-2);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.gcalDot{width:10px; height:10px; border-radius:999px; margin-top:6px; flex:0 0 auto}
+
+.gcalWeekWrap{
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: var(--radius-lg);
+  overflow:hidden;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+}
+
+.gcalWeekHeader{
+  display:grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: var(--surface-1);
+}
+.gcalWeekColHead{
+  padding:10px 10px 8px 10px;
+  border-right:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  display:flex; align-items:baseline; justify-content:space-between;
+}
+.gcalWeekColHead:last-child{border-right:0}
+.gcalWeekDayNum{font-weight:900}
+.gcalWeekDayNum.today{
+  display:inline-flex;
+  width:24px; height:24px;
+  align-items:center; justify-content:center;
+  border-radius:999px;
+  background: color-mix(in srgb, var(--text) 12%, var(--bg));
+}
+
+.gcalWeekGrid{
+  display:grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-height:220px;
+}
+.gcalWeekCol{
+  padding:10px;
+  border-right:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  min-width:0;
+}
+.gcalWeekCol:last-child{border-right:0}
+
+.gcalChip{
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-left:6px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 14px;
+  padding:7px 9px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  cursor:pointer;
+  margin-bottom:8px;
+  min-width:0;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.gcalChip:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.gcalChip.month{
+  border:0;
+  border-radius: 12px;
+  padding:5px 9px;
+  color:#fff;
+  box-shadow: var(--shadow-xs);
+}
+.gcalChipTitle{
+  font-size:12px;
+  font-weight:900;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.gcalMonthWrap{
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: var(--radius-lg);
+  overflow:hidden;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+}
+.gcalMonthDow{
+  display:grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: var(--surface-1);
+}
+.gcalDowCell{
+  text-align:center;
+  padding:8px 0;
+  font-size:12px;
+  color:var(--muted);
+  border-right:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+.gcalDowCell:last-child{border-right:0}
+
+.gcalMonthGrid{
+  display:grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.gcalDayCell{
+  border-right:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-bottom:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  padding:8px;
+  min-height:92px;
+  background: var(--surface-1);
+  cursor:pointer;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  transition: background var(--dur) var(--ease);
+}
+.gcalDayCell:hover{ background: var(--surface-2); }
+.gcalDayCell:nth-child(7n){border-right:0}
+.gcalDayCell.other{opacity:.55}
+.gcalDayCell.today{ box-shadow: inset 0 0 0 2px color-mix(in srgb, #60a5fa 55%, transparent); }
+.gcalDayTop{display:flex; justify-content:space-between; align-items:center}
+.gcalDayNum{font-weight:900; font-size:12px}
+.gcalDayDots{display:flex; gap:4px; align-items:center}
+.gcalDotSm{width:7px; height:7px; border-radius:999px; display:inline-block}
+.gcalMonthChips{display:flex; flex-direction:column; gap:6px; min-width:0}
+
+/* ---------- Dashboard spacing ---------- */
+.grid.two .card a.listItem + a.listItem{ margin-top: 12px; }
+
+/* ---------- Dashboard scroll-snap carousels ---------- */
+.dashSnapRow{
+  display:flex;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding-bottom:6px;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+  scroll-behavior:smooth;
+  width:100%;
+  max-width:100%;
+  box-sizing:border-box;
+  gap:0;
+}
+.dashSnapRow > *{ min-width:0; }
+
+.dashSnapRow::-webkit-scrollbar{ height:8px; }
+.dashSnapRow::-webkit-scrollbar-thumb{
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius:999px;
+}
+
+.dashSnapPage{
+  flex:0 0 100%;
+  scroll-snap-align:start;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding-right:12px;
+  box-sizing:border-box;
+}
+.dashSnapPage:last-child{ padding-right:0; }
+
+.dashSnapDots{
+  display:flex;
+  justify-content:center;
+  gap:8px;
+  margin-top:10px;
+}
+.dashSnapDot{
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: var(--surface-1);
+  cursor:pointer;
+  padding:0;
+}
+.dashSnapDot.active{
+  background: color-mix(in srgb, var(--text) 22%, var(--bg));
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+}
+
+/* =========================================================
+   Mobile UI fixes (keep your behavior, polish the look)
+   ========================================================= */
+@media (max-width: 860px){
+  .grid.two{ grid-template-columns: 1fr !important; }
+  .card{ overflow:hidden; }
+  .gcalToolbar{flex-direction:column; align-items:stretch}
+  .gcalToolbar .row{justify-content:flex-start}
+  .gcalWeekWrap{overflow-x:auto}
+  .gcalWeekHeader, .gcalWeekGrid{min-width:720px}
+}
+
+@media (max-width: 560px){
+  header .row{ flex-wrap: wrap; gap:10px; }
+  #nav{ width:100%; flex-wrap: wrap; gap:8px; }
+
+  .container{ padding: 14px !important; }
+
+  .grid.two{ grid-template-columns: 1fr !important; }
+
+  .formRow,
+  .row.formRow,
+  .formGrid,
+  .grid.formGrid,
+  .grid.three,
+  .grid.four{
+    grid-template-columns: 1fr !important;
+  }
+
+  input, select, textarea, button{ max-width: 100%; }
+  textarea{ min-height: 96px; }
+
+  .modal,
+  dialog{
+    width: min(96vw, 560px) !important;
+    max-height: 86vh !important;
+    overflow: auto !important;
+    border-radius: var(--radius-lg);
+  }
+
+  .modal .actions,
+  dialog .actions,
+  .modalActions{
+    position: sticky;
+    bottom: 0;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+    gap:10px;
+  }
+
+  .modal .actions button,
+  dialog .actions button,
+  .modalActions button{ flex:1 1 auto; }
+
+  input[type="file"]{ width: 100%; }
+
+  .listRow{ padding: 10px !important; }
+  .pill, .badge{ max-width: 100%; }
+
+  .gcalDayCell{ min-height:64px; padding:6px }
+  .gcalMonthChips{ display:none }
+}
+
+/* ===== Hard overrides for inline grid styles inside modals (Android/phone) ===== */
+@media (max-width: 560px){
+  body > div[style*="position:fixed"][style*="z-index:50"]{
+    padding:10px !important;
+  }
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card{
+    width: 96vw !important;
+    max-height: 90vh !important;
+    overflow: auto !important;
+  }
+
+  .card .grid{ grid-template-columns: 1fr !important; }
+  .card .grid[style]{ grid-template-columns: 1fr !important; }
+  .card div[style*="grid-template-columns"]{
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .card .row{
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  .card input,
+  .card select,
+  .card textarea{
+    width: 100% !important;
+  }
+
+  .card .row[style*="justify-content:flex-end"],
+  .card .row[style*="justify-content:space-between"]{
+    flex-wrap: wrap !important;
+  }
+  .card .btn{ width: auto; }
+}

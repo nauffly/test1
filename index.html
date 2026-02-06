@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Javi</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbarInner">
+      <div class="row" style="gap:12px">
+        <div class="brand">Javi</div>
+        <nav class="nav" id="nav">
+          <a href="#dashboard" data-route="dashboard" class="active">Dashboard</a>
+          <a href="#gear" data-route="gear">Gear</a>
+          <a href="#events" data-route="events">Events</a>
+          <a href="#kits" data-route="kits">Kits</a>
+        </nav>
+      </div>
+      <div class="row">
+        <button class="btn secondary" id="themeBtn" title="Toggle theme">Dark</button>
+        <button class="btn secondary" id="logoutBtn" title="Sign out" style="display:none">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="container">
+    <div id="view"></div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- Supabase JS (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
