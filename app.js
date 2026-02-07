@@ -693,9 +693,22 @@ function setTheme(theme){
 }
 
 async function ensureServiceWorker(){
-  if("serviceWorker" in navigator){
-    try{ await navigator.serviceWorker.register("./sw.js"); } catch(e){}
-  }
+  // Disable SW caching for now: stale cached JS was causing users to see old behavior.
+  if(!("serviceWorker" in navigator)) return;
+  try{
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for(const reg of regs){
+      try{ await reg.unregister(); }catch(_){ }
+    }
+    if(window.caches){
+      const keys = await caches.keys();
+      for(const k of keys){
+        if(/^javi-supabase-/i.test(k)){
+          try{ await caches.delete(k); }catch(_){ }
+        }
+      }
+    }
+  }catch(_){ }
 }
 
 /** ---------- Supabase data helpers ---------- **/
