@@ -1,5 +1,5 @@
 var supabase;
-// JAVI_BUILD: 2026-02-06-dashboard-gcal-views
+// JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
  * Javi (Online-first) — Supabase-backed static app
  * - Requires you to fill config.js with SUPABASE_URL + SUPABASE_ANON_KEY
@@ -195,10 +195,20 @@ function setupHeaderUX(){
   // Reorder nav links if present
   const nav = document.querySelector("#nav");
   if(nav){
-    const order = ["dashboard","events","gear","kits"];
+    const order = ["dashboard","events","gear","kits","workspace"];
     const links = Array.from(nav.querySelectorAll("a[data-route]"));
     const byRoute = Object.fromEntries(links.map(a=>[a.dataset.route,a]));
     order.forEach(r=>{ if(byRoute[r]) nav.appendChild(byRoute[r]); });
+
+    // Add Workspace link if the HTML nav does not include it
+    if(!nav.querySelector('a[data-route="workspace"]')){
+      const a = document.createElement("a");
+      a.href = "#workspace";
+      a.dataset.route = "workspace";
+      a.textContent = "Workspace";
+      nav.appendChild(a);
+    }
+
   }
 
   // Create hamburger + menu (append to BODY so it always exists, regardless of header markup)
@@ -215,6 +225,7 @@ function setupHeaderUX(){
     menu.innerHTML = `
       <div class="stack" style="gap:10px">
         <button class="btn secondary" id="menuThemeBtn" type="button">Toggle theme</button>
+        <button class="btn secondary" id="menuWorkspaceBtn" type="button">Workspace</button>
         <button class="btn secondary" id="menuLogoutBtn" type="button">Sign out</button>
       </div>
     `;
@@ -231,6 +242,9 @@ function setupHeaderUX(){
     btn.addEventListener("click",(e)=>{ e.preventDefault(); menu.classList.toggle("open"); });
 
     menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); themeBtn?.click(); });
+
+    // Workspace shortcut
+    menu.querySelector("#menuWorkspaceBtn")?.addEventListener("click",()=>{ close(); location.hash = "#workspace"; });
     menu.querySelector("#menuLogoutBtn")?.addEventListener("click",()=>{ close(); logoutBtn?.click(); });
 
     document.addEventListener("click",(e)=>{
@@ -621,8 +635,55 @@ const state = {
   route: "dashboard",
   theme: localStorage.getItem("javi_theme") || "dark",
   user: null,
+  displayName: localStorage.getItem("javi_display_name") || "",
+
+  // Multi-tenant workspace context (Option B)
+  workspaceId: localStorage.getItem("javi_workspace_id") || null,
+  workspaceName: localStorage.getItem("javi_workspace_name") || null,
+  workspaceRole: localStorage.getItem("javi_workspace_role") || null,
+
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
 };
+
+function pickDisplayName(user){
+  const md = user?.user_metadata || {};
+  const raw = md.display_name || md.name || md.full_name || localStorage.getItem("javi_display_name") || "";
+  return String(raw || "").trim();
+}
+
+async function upsertMyDisplayName(displayName){
+  const nm = String(displayName || "").trim();
+  if(!nm || !state.user?.id) return;
+
+  state.displayName = nm;
+  localStorage.setItem("javi_display_name", nm);
+
+  try{ await supabase.auth.updateUser({ data:{ display_name:nm, name:nm, full_name:nm } }); }catch(_){ }
+  try{
+    const {error} = await supabase
+      .from("profiles")
+      .upsert({ id: state.user.id, display_name: nm, updated_at: new Date().toISOString() }, { onConflict:"id" });
+    if(error) throw error;
+  }catch(_){ }
+}
+
+async function fetchDisplayNamesForUserIds(userIds){
+  const out = {};
+  const ids = Array.from(new Set((userIds||[]).filter(Boolean)));
+  if(!ids.length) return out;
+  try{
+    const {data, error} = await supabase
+      .from("profiles")
+      .select("id,display_name")
+      .in("id", ids);
+    if(error) throw error;
+    for(const row of (data||[])){
+      const nm = String(row.display_name || "").trim();
+      if(nm) out[row.id] = nm;
+    }
+  }catch(_){ }
+  return out;
+}
 
 function setTheme(theme){
   state.theme=theme;
@@ -661,8 +722,682 @@ async function sbUpdate(table, id, patch){
   return data;
 }
 async function sbDelete(table, id){
-  const {error} = await supabase.from(table).delete().eq("id", id);
+  // Keep tenant isolation while still supporting legacy rows with NULL workspace_id.
+  let q = supabase.from(table).delete().eq("id", id);
+  if(TENANT_TABLES.has(table)){
+    if(!state.workspaceId) throw new Error("No workspace selected.");
+    q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
+  }
+  const {data, error} = await q;
   if(error) throw error;
+
+  // Some legacy rows may have NULL/missing workspace_id after migration.
+  // If scoped delete removed nothing, retry by id only.
+  if(TENANT_TABLES.has(table) && (data || []).length === 0){
+    const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
+    if(retryErr) throw retryErr;
+  }
+}
+
+// --- Audit / attribution helpers (best-effort; falls back if columns don't exist) ---
+const AUDIT_KEYS = new Set([
+  "created_by","created_by_email",
+  "reserved_by","reserved_by_email",
+  "returned_by","returned_by_email","returned_at",
+  "closed_by","closed_by_email"
+]);
+
+function _isMissingColumnErr(err){
+  const msg = String(err?.message || err || "");
+  return /column .* does not exist/i.test(msg) || /Could not find the/i.test(msg);
+}
+function _stripAudit(obj){
+  const o = {...obj};
+  for(const k of Object.keys(o)){
+    if(AUDIT_KEYS.has(k)) delete o[k];
+  }
+  return o;
+}
+function _currentUser(){
+  return state?.user || null;
+}
+async function sbInsertAudit(table, row){
+  try{
+    return await sbInsert(table, row);
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      return await sbInsert(table, _stripAudit(row));
+    }
+    throw err;
+  }
+}
+async function sbUpdateAudit(table, id, patch){
+  try{
+    return await sbUpdate(table, id, patch);
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      return await sbUpdate(table, id, _stripAudit(patch));
+    }
+    throw err;
+  }
+}
+async function sbBulkUpdateAudit(table, matchFn, patch){
+  // matchFn: (q)=>q (apply filters). patch may include audit fields.
+  try{
+    const {error} = await matchFn(supabase.from(table).update(patch));
+    if(error) throw error;
+    return;
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      const {error} = await matchFn(supabase.from(table).update(_stripAudit(patch)));
+      if(error) throw error;
+      return;
+    }
+    throw err;
+  }
+}
+
+
+
+/** ---------- Workspace (multi-tenant) helpers ---------- **/
+const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
+
+function applyWorkspaceScope(q, includeLegacyNull=false){
+  if(!state.workspaceId) throw new Error("No workspace selected.");
+  if(includeLegacyNull){
+    return q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
+  }
+  return q.eq("workspace_id", state.workspaceId);
+}
+
+function persistWorkspaceToLocalStorage(){
+  if(state.workspaceId) localStorage.setItem("javi_workspace_id", state.workspaceId);
+  if(state.workspaceName) localStorage.setItem("javi_workspace_name", state.workspaceName);
+  if(state.workspaceRole) localStorage.setItem("javi_workspace_role", state.workspaceRole);
+}
+
+function clearWorkspaceLocalStorage(){
+  localStorage.removeItem("javi_workspace_id");
+  localStorage.removeItem("javi_workspace_name");
+  localStorage.removeItem("javi_workspace_role");
+  state.workspaceId = null;
+  state.workspaceName = null;
+  state.workspaceRole = null;
+}
+
+// Back-compat alias (older handlers referenced this)
+function clearWorkspaceSelection(){
+  clearWorkspaceLocalStorage();
+}
+
+// Workspace switcher modal (works even if hamburger menu isn't present)
+async function openWorkspaceSwitcher(){
+  try{
+    const workspaces = await fetchMyWorkspaces();
+    if(!workspaces.length){
+      toast("No workspaces found.");
+      return;
+    }
+    const items = workspaces.map(w=>{
+      const active = w.id===state.workspaceId;
+      return el("button",{
+        class: active ? "btn" : "btn secondary",
+        style:"width:100%; justify-content:flex-start",
+        onClick:()=>{
+          state.workspaceId = w.id;
+          state.workspaceName = w.name;
+          state.workspaceRole = w.role;
+          persistWorkspaceToLocalStorage();
+          toast(`Switched to ${w.name}`);
+          render();
+        }
+      },[active ? `✓ ${w.name}` : w.name]);
+    });
+
+    modal(el("div",{},[
+      el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+        el("h2",{},["Switch workspace"]),
+        el("span",{class:"badge"},[state.workspaceRole || "member"])
+      ]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        "Choose which workspace to use for data in the app."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"stack", style:"gap:10px"}, items),
+    ]));
+  }catch(e){
+    toast(e?.message || String(e));
+  }
+}
+
+
+async function sbRpc(fn, args){
+  const {data, error} = await supabase.rpc(fn, args || {});
+  if(error) throw error;
+  return data;
+}
+
+async function fetchMyWorkspaces(){
+  // Requires: workspace_members has FK to workspaces as "workspaces"
+  const {data, error} = await supabase
+    .from("workspace_members")
+    .select("workspace_id, role, workspaces(name)")
+    .eq("user_id", state.user.id);
+  if(error) throw error;
+
+  const list = (data || []).map(r=>({
+    id: r.workspace_id,
+    role: r.role,
+    name: r.workspaces?.name || "Workspace"
+  }));
+
+  // stable ordering
+  list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  return list;
+}
+
+async function ensureWorkspaceSelected(view){
+  // Returns true if workspace is ready; otherwise renders setup UI and returns false.
+  if(!state.user) return false;
+
+  let workspaces = [];
+  try{
+    workspaces = await fetchMyWorkspaces();
+  }catch(e){
+    // If the migration hasn't been run yet, show a helpful message.
+    view.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Workspace setup required"]),
+      el("div",{class:"muted", style:"margin-top:6px"},[
+        "Your database is not set up for multi-user workspaces yet."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"small"},[
+        "Run the workspace SQL migration first, then refresh this page."
+      ])
+    ]));
+    return false;
+  }
+
+  if(!workspaces.length){
+    renderCreateWorkspace(view);
+    return false;
+  }
+
+  // Keep localStorage-selected workspace if still valid
+  const preferred = state.workspaceId && workspaces.find(w=>w.id===state.workspaceId);
+  const selected = preferred || workspaces[0];
+
+  state.workspaceId = selected.id;
+  state.workspaceName = selected.name;
+  state.workspaceRole = selected.role;
+  persistWorkspaceToLocalStorage();
+
+  // Optional: expose a quick switcher in the hamburger menu (if present)
+  try{
+    wireWorkspaceMenu(workspaces);
+  }catch(_){}
+
+  return true;
+}
+
+/** ---------- Workspace members + invite links ---------- **/
+function parseInviteTokenFromHash(){
+  const raw = (location.hash || "").replace(/^#/, "");
+  // Supported:
+  //   #invite=<token>
+  //   #workspace?invite=<token>
+  //   #workspace/invite/<token>
+  if(!raw) return null;
+
+  // #invite=...
+  if(raw.toLowerCase().startsWith("invite=")) return raw.split("=").slice(1).join("=").trim() || null;
+
+  // #workspace?invite=...
+  if(raw.toLowerCase().startsWith("workspace?")){
+    const qs = raw.split("?")[1] || "";
+    const params = new URLSearchParams(qs);
+    return (params.get("invite") || params.get("token") || "").trim() || null;
+  }
+
+  // #workspace/invite/<token>
+  const m = raw.match(/workspace\/invite\/(.+)$/i);
+  if(m) return decodeURIComponent(m[1]).trim() || null;
+
+  // Any hash containing invite=
+  if(raw.toLowerCase().includes("invite=")){
+    const idx = raw.toLowerCase().indexOf("invite=");
+    return raw.slice(idx + "invite=".length).trim() || null;
+  }
+
+  return null;
+}
+
+async function tryAcceptInviteIfPresent(){
+  const token = parseInviteTokenFromHash();
+  if(!token || !state.user) return false;
+
+  const currentName = pickDisplayName(state.user);
+  if(!currentName){
+    const entered = prompt("Enter your display name for this workspace:") || "";
+    const nm = entered.trim();
+    if(!nm){
+      toast("Display name is required to join a workspace.");
+      return false;
+    }
+    await upsertMyDisplayName(nm);
+  }
+
+  try{
+    // Attempt common RPC signatures
+    try{
+      await sbRpc("javi_accept_invite", { invite_token: token });
+    }catch(e1){
+      try{
+        await sbRpc("javi_accept_invite", { token });
+      }catch(e2){
+        await sbRpc("javi_accept_invite", { p_token: token });
+      }
+    }
+
+    toast("Invite accepted. You're in!");
+    // Clear hash and force workspace refetch
+    location.hash = "#dashboard";
+    clearWorkspaceSelection();
+    return true;
+  }catch(e){
+    console.warn(e);
+    toast(e?.message || "Invite failed.");
+    // Keep the hash so user can retry after fixing policies
+    return false;
+  }
+}
+
+function pickMemberVisibleName(row){
+  const direct = [row?.display_name, row?.name, row?.full_name, row?.user_email, row?.email, row?.username, row?.handle];
+  for(const v of direct){
+    const nm = String(v || "").trim();
+    if(nm) return nm;
+  }
+  return "";
+}
+
+async function fetchWorkspaceMembers(workspaceId){
+  let data = null;
+  let error = null;
+
+  // Try reading display_name from workspace_members first (if column exists).
+  ({data, error} = await supabase
+    .from("workspace_members")
+    .select("user_id, role, created_at, display_name")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", {ascending:true}));
+
+  if(error && _isMissingColumnErr(error)){
+    ({data, error} = await supabase
+      .from("workspace_members")
+      .select("user_id, role, created_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at", {ascending:true}));
+  }
+  if(error) throw error;
+
+  const rows = data || [];
+  const nameMap = await fetchDisplayNamesForUserIds(rows.map(r=>r.user_id));
+  return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || "" }));
+}
+
+async function createInviteLink(workspaceId, role="member"){
+  // Returns a full URL with #invite=<token> (or RPC-provided invite URL)
+  let token = null;
+  let directLink = null;
+
+  // Try multiple RPC signatures so your SQL can vary slightly.
+  const tries = [
+    // canonical: workspace_id + optional expiry/uses
+    ["javi_create_invite", { workspace_id: workspaceId, expires_hours: 168, max_uses: 25 }],
+    // alternate param naming (if you created SQL with p_* args)
+    ["javi_create_invite", { p_workspace_id: workspaceId, p_expires_hours: 168, p_max_uses: 25 }]
+  ];
+
+  let lastErr = null;
+  for(const [fn, args] of tries){
+    try{
+      const out = await sbRpc(fn, args);
+      const payload = Array.isArray(out) ? out[0] : out;
+
+      if(typeof payload === "string"){
+        if(/^https?:\/\//i.test(payload)){
+          directLink = payload;
+          break;
+        }
+        token = payload;
+      }else if(payload && typeof payload === "object"){
+        directLink = payload.invite_url || payload.invite_link || payload.url || payload.link || null;
+        token = payload.token || payload.invite_token || payload.id || payload.value || payload.code || null;
+        if(directLink || token) break;
+      }
+
+      if(token) break;
+    }catch(e){
+      lastErr = e;
+    }
+  }
+
+  if(directLink) return directLink;
+
+  if(!token){
+    if(lastErr) throw lastErr;
+    throw new Error("Could not create invite token.");
+  }
+
+  const base = location.href.split("#")[0];
+  return `${base}#invite=${encodeURIComponent(token)}`;
+}
+
+async function deleteWorkspaceAndAllData(workspaceId){
+  let lastErr = null;
+  const rpcTries = [
+    ["javi_delete_workspace", { workspace_id: workspaceId }],
+    ["javi_delete_workspace", { p_workspace_id: workspaceId }],
+    ["javi_delete_workspace", { wid: workspaceId }]
+  ];
+  for(const [fn,args] of rpcTries){
+    try{ await sbRpc(fn,args); return; }catch(e){ lastErr = e; }
+  }
+
+  // Fallback: client-side cascade delete
+  const del = async (table, col, val)=>{
+    const {error} = await supabase.from(table).delete().eq(col, val);
+    if(error) throw error;
+  };
+
+  try{
+    await del("reservations", "workspace_id", workspaceId);
+    await del("checkouts", "workspace_id", workspaceId);
+    await del("kits", "workspace_id", workspaceId);
+    await del("events", "workspace_id", workspaceId);
+    await del("gear_items", "workspace_id", workspaceId);
+    await del("workspace_members", "workspace_id", workspaceId);
+    await del("workspaces", "id", workspaceId);
+  }catch(e){
+    throw lastErr || e;
+  }
+}
+
+function canManageWorkspace(){
+  return String(state.workspaceRole || "").toLowerCase() === "owner";
+}
+
+async function renderWorkspace(view){
+  view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
+    el("div",{},[
+      el("h1",{},["Workspace"]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        state.workspaceName ? `Current: ${state.workspaceName}` : "No workspace selected"
+      ])
+    ]),
+    el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[
+      el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Back"]),
+      el("button",{class:"btn secondary", onClick:()=>{ openWorkspaceSwitcher(); }},["Switch workspace"])
+    ])
+  ]));
+
+  const meCard = el("div",{class:"card", style:"margin-bottom:12px"},[]);
+  meCard.appendChild(el("h2",{},["Your profile"]));
+  meCard.appendChild(el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px"},[
+    el("div",{},[
+      el("label",{class:"small muted"},["Email"]),
+      el("input",{class:"input", value: state.user?.email || "", readonly:"readonly"})
+    ]),
+    (()=>{
+      const nameInput = el("input",{class:"input", value: state.displayName || "", placeholder:"How teammates see you"});
+      const saveBtn = el("button",{class:"btn secondary", style:"margin-top:8px", onClick:async ()=>{
+        const nm = (nameInput.value || "").trim();
+        if(!nm){ toast("Name is required."); return; }
+        try{
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving…";
+          await upsertMyDisplayName(nm);
+          toast("Name updated.");
+          render();
+        }catch(e){
+          toast(e?.message || String(e));
+        }finally{
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save name";
+        }
+      }},["Save name"]);
+      return el("div",{},[
+        el("label",{class:"small muted"},["Name shown to others"]),
+        nameInput,
+        saveBtn
+      ]);
+    })()
+  ]));
+  view.appendChild(meCard);
+
+  const card = el("div",{class:"card"},[]);
+  card.appendChild(el("h2",{},["Members"]));
+  card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+    "If you can't see other members here, update your Supabase RLS policy for workspace_members (see note below)."
+  ]));
+  card.appendChild(el("hr",{class:"sep"}));
+
+  const listEl = el("div",{class:"stack", style:"gap:8px"},[ el("div",{class:"muted"},["Loading…"]) ]);
+  card.appendChild(listEl);
+
+  const inviteBox = el("div",{style:"margin-top:14px"},[]);
+  card.appendChild(inviteBox);
+
+  // Owner-only: invite link generator
+  if(canManageWorkspace()){
+    inviteBox.appendChild(el("hr",{class:"sep"}));
+    inviteBox.appendChild(el("div",{style:"font-weight:800"},["Invite users"]));
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+      "Create a link and send it to someone. When they sign in, the app will add them to this workspace."
+    ]));
+
+    const out = el("input",{class:"input", readonly:"readonly", value:"", placeholder:"Invite link will appear here", style:"margin-top:10px"});
+    const actions = el("div",{class:"row", style:"gap:10px; flex-wrap:wrap; margin-top:10px"},[]);
+    const btn = el("button",{class:"btn", onClick: async ()=>{
+      try{
+        btn.disabled = true;
+        btn.textContent = "Creating…";
+        const link = await createInviteLink(state.workspaceId, "member");
+        out.value = link;
+        try{
+          await navigator.clipboard?.writeText(link);
+          toast("Invite link copied.");
+        }catch(_){
+          toast("Invite link created.");
+        }
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        btn.disabled = false;
+        btn.textContent = "Create invite link";
+      }
+    }},["Create invite link"]);
+
+    const copyBtn = el("button",{class:"btn secondary", onClick: async ()=>{
+      try{
+        await navigator.clipboard?.writeText(out.value || "");
+        toast("Copied.");
+      }catch(_){
+        toast("Copy not available.");
+      }
+    }},["Copy"]);
+
+    actions.appendChild(btn);
+    actions.appendChild(copyBtn);
+    inviteBox.appendChild(out);
+    inviteBox.appendChild(actions);
+
+    const danger = el("div",{style:"margin-top:14px"},[
+      el("hr",{class:"sep"}),
+      el("div",{style:"font-weight:800; color:var(--danger)"},["Danger zone"]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        "Delete this workspace and all data (events, gear, kits, reservations, checkouts, memberships) for every user in it."
+      ])
+    ]);
+    const deleteBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick:async ()=>{
+      if(!state.workspaceId) return;
+      const confirmName = prompt(`Type the workspace name (${state.workspaceName || "workspace"}) to confirm deletion:`);
+      if((confirmName||"").trim() !== String(state.workspaceName||"").trim()){
+        toast("Workspace name did not match. Deletion canceled.");
+        return;
+      }
+      if(!confirm("Final confirmation: permanently delete this workspace and all data for all users?")) return;
+      try{
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = "Deleting…";
+        await deleteWorkspaceAndAllData(state.workspaceId);
+        toast("Workspace deleted.");
+        clearWorkspaceSelection();
+        location.hash = "#dashboard";
+        render();
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = "Delete workspace";
+      }
+    }},["Delete workspace"]);
+    danger.appendChild(deleteBtn);
+    inviteBox.appendChild(danger);
+  } else {
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:10px"},[
+      "Only the workspace owner can create invite links."
+    ]));
+  }
+
+  view.appendChild(card);
+
+  // Load members
+  try{
+    const members = await fetchWorkspaceMembers(state.workspaceId);
+    listEl.innerHTML = "";
+    if(!members.length){
+      listEl.appendChild(el("div",{class:"muted"},["No members found."]));
+    } else {
+      for(const m of members){
+        const isMe = m.user_id === state.user.id;
+        listEl.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+          el("div",{class:"stack", style:"min-width:0"},[
+            el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[
+              isMe ? `${state.displayName || state.user.email} (you)` : (m.display_name || `User ${String(m.user_id||"").slice(0,8)}`)
+            ]),
+            el("div",{class:"muted small"},[
+              `Role: ${m.role || "member"}`
+            ])
+          ]),
+          el("span",{class:"badge"},[isMe ? "You" : (m.role||"member")])
+        ]));
+      }
+    }
+  }catch(e){
+    listEl.innerHTML = "";
+    listEl.appendChild(el("div",{class:"muted"},[
+      e?.message || String(e)
+    ]));
+  }
+
+  // RLS note (in-app)
+  const note = el("div",{class:"card", style:"margin-top:12px"},[
+    el("div",{style:"font-weight:800"},["Supabase note (if members list is blank)"]),
+    el("div",{class:"small muted", style:"margin-top:6px"},[
+      "In Supabase, make sure workspace_members SELECT policy allows any workspace member to read rows in that workspace.",
+      el("br"),
+      "Example: using (public.is_workspace_member(workspace_id))"
+    ])
+  ]);
+  view.appendChild(note);
+}
+
+
+function renderCreateWorkspace(view){
+  const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
+  card.appendChild(el("h1",{},["Create your workspace"]));
+  card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+    "This keeps your gear, events, and kits private to your team."
+  ]));
+  card.appendChild(el("hr",{class:"sep"}));
+
+  const name = el("input",{class:"input", placeholder:"Workspace name (e.g., Javi Productions)"});
+  const msg = el("div",{class:"small muted", style:"margin-top:10px"},[""]);
+
+  const row = el("div",{class:"row", style:"justify-content:flex-end; margin-top:12px"},[
+    el("button",{class:"btn", onClick: async ()=>{
+      msg.textContent = "Creating workspace…";
+      try{
+        const wsName = (name.value || "").trim() || "My Workspace";
+        // SECURITY DEFINER: creates workspace, adds you as owner, and claims any legacy rows with NULL workspace_id
+        const newId = await sbRpc("javi_bootstrap_workspace", { workspace_name: wsName });
+        // refresh memberships + set active
+        const wss = await fetchMyWorkspaces();
+        const created = wss.find(w=>w.id===newId) || wss[0];
+        state.workspaceId = created.id;
+        state.workspaceName = created.name;
+        state.workspaceRole = created.role;
+        persistWorkspaceToLocalStorage();
+        msg.textContent = "Workspace created.";
+        render();
+      }catch(e){
+        msg.textContent = e.message || String(e);
+      }
+    }},["Create workspace"])
+  ]);
+
+  card.appendChild(name);
+  card.appendChild(row);
+  card.appendChild(msg);
+
+  view.appendChild(card);
+}
+
+function wireWorkspaceMenu(workspaces){
+  // Adds a "Workspace" button into hamburger menu if it exists.
+  const menu = document.querySelector("#hamburgerMenu .stack");
+  if(!menu) return;
+
+  if(!document.querySelector("#menuWorkspaceBtn")){
+    const btn = document.createElement("button");
+    btn.className = "btn secondary";
+    btn.type = "button";
+    btn.id = "menuWorkspaceBtn";
+    btn.textContent = "Workspace";
+    menu.prepend(btn);
+
+    btn.addEventListener("click", ()=>{
+      const items = (workspaces||[]).map(w=>{
+        const active = w.id===state.workspaceId;
+        return el("button",{
+          class: active ? "btn" : "btn secondary",
+          style:"width:100%; justify-content:flex-start",
+          onClick:()=>{
+            state.workspaceId = w.id;
+            state.workspaceName = w.name;
+            state.workspaceRole = w.role;
+            persistWorkspaceToLocalStorage();
+            toast(`Switched to ${w.name}`);
+            render();
+          }
+        },[active ? `✓ ${w.name}` : w.name]);
+      });
+
+      modal(el("div",{},[
+        el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+          el("h2",{},["Workspace"]),
+          el("span",{class:"badge"},[state.workspaceRole || "member"])
+        ]),
+        el("div",{class:"muted small", style:"margin-top:6px"},[
+          state.workspaceName ? `Current: ${state.workspaceName}` : "Select a workspace"
+        ]),
+        el("hr",{class:"sep"}),
+        el("div",{class:"stack", style:"gap:10px"}, items),
+      ]));
+    });
+  }
 }
 
 /** Conflict: any ACTIVE reservation for same gear that overlaps, OR OPEN checkout with due_at after start */
@@ -671,11 +1406,11 @@ async function gearHasConflict(gearItemId, startAtISO, endAtISO){
   const endAt = new Date(endAtISO);
 
   // reservations
-  const {data: resv, error: e1} = await supabase
+  let qResv = supabase
     .from("reservations")
-    .select("id,start_at,end_at,status")
-    .eq("gear_item_id", gearItemId)
-    .eq("status", "ACTIVE");
+    .select("id,start_at,end_at,status");
+  qResv = applyWorkspaceScope(qResv, true).eq("gear_item_id", gearItemId).eq("status", "ACTIVE");
+  const {data: resv, error: e1} = await qResv;
   if(e1) throw e1;
 
   for(const r of (resv||[])){
@@ -683,10 +1418,11 @@ async function gearHasConflict(gearItemId, startAtISO, endAtISO){
   }
 
   // open checkouts
-  const {data: outs, error: e2} = await supabase
+  let qOuts = supabase
     .from("checkouts")
-    .select("id,due_at,status,items")
-    .eq("status", "OPEN");
+    .select("id,due_at,status,items");
+  qOuts = applyWorkspaceScope(qOuts, true).eq("status", "OPEN");
+  const {data: outs, error: e2} = await qOuts;
   if(e2) throw e2;
 
   for(const c of (outs||[])){
@@ -704,10 +1440,11 @@ async function getBlockedIdsForWindow(startAtISO, endAtISO, ignoreEventId=null){
   const blocked = new Set();
 
   // ACTIVE reservations overlapping this window
-  const {data: resvAll, error: rErr} = await supabase
+  let qBlockedResv = supabase
     .from("reservations")
-    .select("gear_item_id,event_id,start_at,end_at,status")
-    .eq("status","ACTIVE");
+    .select("gear_item_id,event_id,start_at,end_at,status");
+  qBlockedResv = applyWorkspaceScope(qBlockedResv, true).eq("status","ACTIVE");
+  const {data: resvAll, error: rErr} = await qBlockedResv;
   if(rErr) throw rErr;
 
   for(const r of (resvAll||[])){
@@ -718,10 +1455,11 @@ async function getBlockedIdsForWindow(startAtISO, endAtISO, ignoreEventId=null){
   }
 
   // OPEN checkouts with due_at after window start
-  const {data: outsAll, error: oErr} = await supabase
+  let qBlockedOuts = supabase
     .from("checkouts")
-    .select("due_at,status,items")
-    .eq("status","OPEN");
+    .select("due_at,status,items");
+  qBlockedOuts = applyWorkspaceScope(qBlockedOuts, true).eq("status","OPEN");
+  const {data: outsAll, error: oErr} = await qBlockedOuts;
   if(oErr) throw oErr;
 
   for(const c of (outsAll||[])){
@@ -759,15 +1497,19 @@ function renderAuth(view){
 
   const email = el("input",{class:"input", placeholder:"Email"});
   const pass = el("input",{class:"input", placeholder:"Password", type:"password", style:"margin-top:10px"});
+  const displayName = el("input",{class:"input", placeholder:"Display name (shown to teammates)", style:"margin-top:10px", value: state.displayName || ""});
   const msg = el("div",{class:"small muted", style:"margin-top:10px"},[""]);
 
   const row = el("div",{class:"row", style:"justify-content:flex-end; margin-top:12px"},[
     el("button",{class:"btn secondary", onClick: async ()=>{
       msg.textContent = "Creating account…";
       try{
-        const {data, error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value });
+        const nm = displayName.value.trim();
+        if(!nm){ msg.textContent = "Display name is required."; return; }
+        const {data, error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value, options:{ data:{ display_name:nm, name:nm, full_name:nm } } });
         if(error) throw error;
         msg.textContent = "Account created. If email confirmation is enabled, check your inbox; otherwise you can sign in now.";
+        if(data?.user){ state.user = data.user; await upsertMyDisplayName(nm); }
       }catch(e){
         msg.textContent = e.message || String(e);
       }
@@ -777,6 +1519,9 @@ function renderAuth(view){
       try{
         const {data, error} = await supabase.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
+        const nm = displayName.value.trim();
+        state.user = data?.user || state.user;
+        if(nm) await upsertMyDisplayName(nm);
         msg.textContent = "Signed in.";
       }catch(e){
         msg.textContent = e.message || String(e);
@@ -786,6 +1531,7 @@ function renderAuth(view){
 
   card.appendChild(email);
   card.appendChild(pass);
+  card.appendChild(displayName);
   card.appendChild(row);
   card.appendChild(msg);
 
@@ -811,6 +1557,8 @@ async function renderOnce(){
   // session check
   const {data:{session}} = await supabase.auth.getSession();
   state.user = session?.user || null;
+  state.displayName = pickDisplayName(state.user);
+  if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
   $("#logoutBtn").style.display = state.user ? "inline-flex" : "none";
   $("#nav").style.visibility = state.user ? "visible" : "hidden";
 
@@ -818,6 +1566,12 @@ async function renderOnce(){
     renderAuth(view);
     return;
   }
+
+  // Accept invite links (if the URL contains #invite=...)
+  if(await tryAcceptInviteIfPresent()) { await render(); return; }
+
+  // workspace gate (multi-tenant)
+  if(!(await ensureWorkspaceSelected(view))) return;
 
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
@@ -829,6 +1583,7 @@ async function renderOnce(){
   if(state.route==="gear") return renderGear(view);
   if(state.route==="events") return renderEvents(view);
   if(state.route==="kits") return renderKits(view);
+  if(state.route==="workspace") return renderWorkspace(view);
 
   view.appendChild(el("div",{class:"card"},["Not found."]));
 }
@@ -1491,7 +2246,9 @@ async function openEventModal(existing=null){
           } else {
             row.created_at = nowIso;
             row.status = "DRAFT";
-            obj = await sbInsert("events", row);
+            row.created_by = _currentUser()?.id || null;
+            row.created_by_email = _currentUser()?.email || null;
+            obj = await sbInsertAudit("events", row);
             toast("Created event.");
           }
           m.close();
@@ -1518,12 +2275,18 @@ async function renderEventDetail(view, evt){
     el("div",{},[
       el("h1",{},[evt.title]),
       el("div",{class:"muted small"},[`${fmt(evt.start_at)} → ${fmt(evt.end_at)} • ${evt.location || "No location"}`]),
+      (evt.created_by_email ? el("div",{class:"small muted"},[`Created by ${evt.created_by_email}`]) : null),
+      (evt.closed_by_email ? el("div",{class:"small muted"},[`Closed by ${evt.closed_by_email}`]) : null),
     ]),
     el("div",{class:"row"},[
       el("a",{href:"#events", class:"btn secondary"},["Back"]),
       el("button",{class:"btn secondary", onClick:()=>openEventModal(evt)},["Edit"]),
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm("Delete this event?")) return;
+        // Delete child rows first to avoid FK constraint failures (reservations reference events)
+        try{
+          await supabase.from("reservations").delete().eq("event_id", evt.id).eq("workspace_id", state.workspaceId);
+        }catch(e){ /* ignore */ }
         await sbDelete("events", evt.id);
         toast("Event deleted.");
         location.hash="#events";
@@ -1603,6 +2366,8 @@ async function renderEventDetail(view, evt){
           el("div",{class:"stack"},[
             el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
             el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`]),
+            (r.returned_by_email ? el("div",{class:"small muted"},[`Returned by ${r.returned_by_email}`]) : null),
+            (r.reserved_by_email ? el("div",{class:"small muted"},[`Reserved by ${r.reserved_by_email}`]) : null),
           ])
         ]),
         el("button",{class:"btn secondary", onClick: async ()=>{
@@ -1631,7 +2396,8 @@ async function renderEventDetail(view, evt){
         return el("div",{class:"listItem"},[
           el("div",{class:"stack"},[
             el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
-            el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`])
+            el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`]),
+            (r.returned_by_email ? el("div",{class:"small muted"},[`Returned by ${r.returned_by_email}`]) : null)
           ])
         ]);
       }))
@@ -1667,16 +2433,8 @@ async function renderEventDetail(view, evt){
       const conflict = blockedIds.has(gearItemId);
       if(conflict){ conflicted++; continue; }
 
-      const row={
-        event_id: evt.id,
-        gear_item_id: gearItemId,
-        start_at: evt.start_at,
-        end_at: evt.end_at,
-        status:"ACTIVE"
-      };
-      await sbInsert("reservations", row);
-      existingReservedIds.add(gearItemId);
-      added++;
+      const inserted = await tryReserveGearItem(gearItemId);
+      if(inserted) added++; else conflicted++;
     }
 
     if(added){
@@ -1765,6 +2523,26 @@ async function renderEventDetail(view, evt){
     }
   }
 
+  async function tryReserveGearItem(gearItemId){
+    // Re-check conflicts at write time to prevent stale UI state from causing double-booking.
+    const conflictNow = await gearHasConflict(gearItemId, evt.start_at, evt.end_at);
+    if(conflictNow) return false;
+
+    const row={
+      event_id: evt.id,
+      gear_item_id: gearItemId,
+      start_at: evt.start_at,
+      end_at: evt.end_at,
+      status:"ACTIVE",
+      reserved_by: _currentUser()?.id || null,
+      reserved_by_email: _currentUser()?.email || null
+    };
+    await sbInsertAudit("reservations", row);
+    existingReservedIds.add(gearItemId);
+    blockedIds.add(gearItemId);
+    return true;
+  }
+
 
   async function reserveFromScannedGear(rawValue){
     const found = findGearByScan(gear, rawValue);
@@ -1781,13 +2559,13 @@ async function renderEventDetail(view, evt){
       return;
     }
 
-    await sbInsert("reservations", {
-      event_id: evt.id,
-      gear_item_id: found.id,
-      start_at: evt.start_at,
-      end_at: evt.end_at,
-      status:"ACTIVE"
-    });
+    const inserted = await tryReserveGearItem(found.id);
+    if(!inserted){
+      toast("That item became unavailable in this event window.");
+      blockedIds.add(found.id);
+      refreshPick();
+      return;
+    }
     await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
     toast(`Reserved ${found.name}.`);
     render();
@@ -1810,23 +2588,23 @@ async function renderEventDetail(view, evt){
       return;
     }
 
+    let insertedCount = 0;
     for(const id of chosen){
-      const row={
-        event_id: evt.id,
-        gear_item_id: id,
-        start_at: evt.start_at,
-        end_at: evt.end_at,
-        status:"ACTIVE"
-      };
-      await sbInsert("reservations", row);
+      const inserted = await tryReserveGearItem(id);
+      if(inserted) insertedCount++;
+      else blockedIds.add(id);
     }
 
-    await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
+    if(insertedCount>0){
+      await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
+    }
 
-    if(chosen.length===want){
-      toast(chosen.length===1 ? "Reserved." : `Reserved ${chosen.length}.`);
+    if(insertedCount===want){
+      toast(insertedCount===1 ? "Reserved." : `Reserved ${insertedCount}.`);
+    } else if(insertedCount>0){
+      toast(`Reserved ${insertedCount} (some became unavailable).`);
     } else {
-      toast(`Reserved ${chosen.length} (only ${chosen.length} available).`);
+      toast("No selected items were available.");
     }
     render();
   }
@@ -1904,7 +2682,7 @@ async function renderEventDetail(view, evt){
     if(!found){ toast("No matching gear found for that QR code."); return; }
     const resv = reservations.find(r=>r.gear_item_id===found.id);
     if(!resv){ toast("That gear is not currently checked out on this event."); return; }
-    await sbUpdate("reservations", resv.id, { status:"RETURNED" });
+    await sbUpdateAudit("reservations", resv.id, { status:"RETURNED", returned_by: _currentUser()?.id || null, returned_by_email: _currentUser()?.email || null, returned_at: new Date().toISOString() });
     toast(`Returned ${found.name}.`);
     render();
   };
@@ -1946,7 +2724,7 @@ async function renderEventDetail(view, evt){
         // Mark this event's ACTIVE reservations returned (so they are available again)
         const {error: rErr} = await supabase
           .from("reservations")
-          .update({ status:"RETURNED" })
+          .update({ status:"RETURNED", returned_by: _currentUser()?.id || null, returned_by_email: _currentUser()?.email || null, returned_at: nowIso })
           .eq("event_id", evt.id)
           .eq("status","ACTIVE");
         if(rErr) throw rErr;
@@ -1960,7 +2738,7 @@ async function renderEventDetail(view, evt){
             .eq("status","OPEN");
         }catch(_){}
 
-        await sbUpdate("events", evt.id, { status:"CLOSED", end_at: nowIso, updated_at: nowIso });
+        await sbUpdateAudit("events", evt.id, { status:"CLOSED", end_at: nowIso, updated_at: nowIso, closed_by: _currentUser()?.id || null, closed_by_email: _currentUser()?.email || null });
 
         toast("Returned. Gear is available again.");
         render();
@@ -2126,6 +2904,9 @@ $("#themeBtn").addEventListener("click", ()=> setTheme(state.theme==="dark" ? "l
 $("#logoutBtn").addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
+  clearWorkspaceLocalStorage();
+  localStorage.removeItem("javi_display_name");
+  state.displayName = "";
   toast("Signed out.");
   location.hash="#dashboard";
   render();

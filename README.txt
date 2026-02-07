@@ -54,23 +54,16 @@ QR setup troubleshooting (Supabase)
   3) Refresh the app and try saving gear again.
 - Why this happens: your project was created before the QR feature and is missing the new column.
 
-Ready-to-copy QR naming
-- Recommended format: `JAVI-<CATEGORY>-<ITEM>-<###>`
-- Use only uppercase letters, numbers, and hyphens.
-- One physical item = one unique code.
 
-Copy/paste templates
-- Camera: `JAVI-CAM-FX3-001`
-- Lens: `JAVI-LENS-24-70-001`
-- Audio: `JAVI-AUD-NTG5-001`
-- Lighting: `JAVI-LGT-AP300D-001`
-- Grip: `JAVI-GRP-CSTAND-001`
-- Media: `JAVI-MED-CFAST-001`
-- Power: `JAVI-PWR-VMOUNT-001`
-- Accessory: `JAVI-ACC-MONITOR-001`
-
-How to use this in Javi
-1) Generate a QR code image whose text is exactly one of the codes above.
-2) In Gear → Add/Edit, paste the same value into **QR code value**.
-3) Save, then scan from Event → **Scan QR to reserve**.
-4) During an ongoing event, use **Scan QR to return item**.
+Workspace troubleshooting (no JS changes)
+- If you see: `Could not find the function public.javi_delete_workspace(...) in the schema cache`, you can fix this entirely in Supabase.
+- In Supabase SQL Editor, run `supabase_workspace_rpc_fix.sql` from this repo.
+- This creates/updates:
+  - `javi_delete_workspace(p_workspace_id uuid)`
+  - `javi_set_member_display_name(p_workspace_id uuid, p_display_name text, p_user_id uuid default auth.uid())`
+  - `javi_list_workspace_members(p_workspace_id uuid)`
+- After running SQL, reload PostgREST cache by running:
+  `notify pgrst, 'reload schema';`
+- Then refresh the app and test:
+  - Delete workspace as owner
+  - Save name as a user and confirm other members see the change
