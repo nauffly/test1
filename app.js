@@ -1,5 +1,5 @@
 var supabase;
-// JAVI_BUILD: 2026-02-07-workspaces-invites-v1
+// JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
  * Javi (Online-first) — Supabase-backed static app
  * - Requires you to fill config.js with SUPABASE_URL + SUPABASE_ANON_KEY
@@ -690,6 +690,66 @@ async function sbDelete(table, id){
   if(error) throw error;
 }
 
+// --- Audit / attribution helpers (best-effort; falls back if columns don't exist) ---
+const AUDIT_KEYS = new Set([
+  "created_by","created_by_email",
+  "reserved_by","reserved_by_email",
+  "returned_by","returned_by_email","returned_at",
+  "closed_by","closed_by_email"
+]);
+
+function _isMissingColumnErr(err){
+  const msg = String(err?.message || err || "");
+  return /column .* does not exist/i.test(msg) || /Could not find the/i.test(msg);
+}
+function _stripAudit(obj){
+  const o = {...obj};
+  for(const k of Object.keys(o)){
+    if(AUDIT_KEYS.has(k)) delete o[k];
+  }
+  return o;
+}
+function _currentUser(){
+  return state?.user || null;
+}
+async function sbInsertAudit(table, row){
+  try{
+    return await sbInsert(table, row);
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      return await sbInsert(table, _stripAudit(row));
+    }
+    throw err;
+  }
+}
+async function sbUpdateAudit(table, id, patch){
+  try{
+    return await sbUpdate(table, id, patch);
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      return await sbUpdate(table, id, _stripAudit(patch));
+    }
+    throw err;
+  }
+}
+async function sbBulkUpdateAudit(table, matchFn, patch){
+  // matchFn: (q)=>q (apply filters). patch may include audit fields.
+  try{
+    const {error} = await matchFn(supabase.from(table).update(patch));
+    if(error) throw error;
+    return;
+  }catch(err){
+    if(_isMissingColumnErr(err)){
+      const {error} = await matchFn(supabase.from(table).update(_stripAudit(patch)));
+      if(error) throw error;
+      return;
+    }
+    throw err;
+  }
+}
+
+
+
 /** ---------- Workspace (multi-tenant) helpers ---------- **/
 const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
 
@@ -707,6 +767,52 @@ function clearWorkspaceLocalStorage(){
   state.workspaceName = null;
   state.workspaceRole = null;
 }
+
+// Back-compat alias (older handlers referenced this)
+function clearWorkspaceSelection(){
+  clearWorkspaceLocalStorage();
+}
+
+// Workspace switcher modal (works even if hamburger menu isn't present)
+async function openWorkspaceSwitcher(){
+  try{
+    const workspaces = await fetchMyWorkspaces();
+    if(!workspaces.length){
+      toast("No workspaces found.");
+      return;
+    }
+    const items = workspaces.map(w=>{
+      const active = w.id===state.workspaceId;
+      return el("button",{
+        class: active ? "btn" : "btn secondary",
+        style:"width:100%; justify-content:flex-start",
+        onClick:()=>{
+          state.workspaceId = w.id;
+          state.workspaceName = w.name;
+          state.workspaceRole = w.role;
+          persistWorkspaceToLocalStorage();
+          toast(`Switched to ${w.name}`);
+          render();
+        }
+      },[active ? `✓ ${w.name}` : w.name]);
+    });
+
+    modal(el("div",{},[
+      el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+        el("h2",{},["Switch workspace"]),
+        el("span",{class:"badge"},[state.workspaceRole || "member"])
+      ]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        "Choose which workspace to use for data in the app."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"stack", style:"gap:10px"}, items),
+    ]));
+  }catch(e){
+    toast(e?.message || String(e));
+  }
+}
+
 
 async function sbRpc(fn, args){
   const {data, error} = await supabase.rpc(fn, args || {});
@@ -896,7 +1002,7 @@ async function renderWorkspace(view){
     ]),
     el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[
       el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Back"]),
-      el("button",{class:"btn secondary", onClick:()=>{ clearWorkspaceSelection(); render(); }},["Switch workspace"])
+      el("button",{class:"btn secondary", onClick:()=>{ openWorkspaceSwitcher(); }},["Switch workspace"])
     ])
   ]));
 
@@ -1928,7 +2034,9 @@ async function openEventModal(existing=null){
           } else {
             row.created_at = nowIso;
             row.status = "DRAFT";
-            obj = await sbInsert("events", row);
+            row.created_by = _currentUser()?.id || null;
+            row.created_by_email = _currentUser()?.email || null;
+            obj = await sbInsertAudit("events", row);
             toast("Created event.");
           }
           m.close();
@@ -1955,6 +2063,8 @@ async function renderEventDetail(view, evt){
     el("div",{},[
       el("h1",{},[evt.title]),
       el("div",{class:"muted small"},[`${fmt(evt.start_at)} → ${fmt(evt.end_at)} • ${evt.location || "No location"}`]),
+      (evt.created_by_email ? el("div",{class:"small muted"},[`Created by ${evt.created_by_email}`]) : null),
+      (evt.closed_by_email ? el("div",{class:"small muted"},[`Closed by ${evt.closed_by_email}`]) : null),
     ]),
     el("div",{class:"row"},[
       el("a",{href:"#events", class:"btn secondary"},["Back"]),
@@ -2040,6 +2150,8 @@ async function renderEventDetail(view, evt){
           el("div",{class:"stack"},[
             el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
             el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`]),
+            (r.returned_by_email ? el("div",{class:"small muted"},[`Returned by ${r.returned_by_email}`]) : null),
+            (r.reserved_by_email ? el("div",{class:"small muted"},[`Reserved by ${r.reserved_by_email}`]) : null),
           ])
         ]),
         el("button",{class:"btn secondary", onClick: async ()=>{
@@ -2068,7 +2180,8 @@ async function renderEventDetail(view, evt){
         return el("div",{class:"listItem"},[
           el("div",{class:"stack"},[
             el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
-            el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`])
+            el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`]),
+            (r.returned_by_email ? el("div",{class:"small muted"},[`Returned by ${r.returned_by_email}`]) : null)
           ])
         ]);
       }))
@@ -2111,7 +2224,9 @@ async function renderEventDetail(view, evt){
         end_at: evt.end_at,
         status:"ACTIVE"
       };
-      await sbInsert("reservations", row);
+      row.reserved_by = _currentUser()?.id || null;
+      row.reserved_by_email = _currentUser()?.email || null;
+      await sbInsertAudit("reservations", row);
       existingReservedIds.add(gearItemId);
       added++;
     }
@@ -2218,12 +2333,14 @@ async function renderEventDetail(view, evt){
       return;
     }
 
-    await sbInsert("reservations", {
+    await sbInsertAudit("reservations", {
       event_id: evt.id,
       gear_item_id: found.id,
       start_at: evt.start_at,
       end_at: evt.end_at,
-      status:"ACTIVE"
+      status:"ACTIVE",
+      reserved_by: _currentUser()?.id || null,
+      reserved_by_email: _currentUser()?.email || null
     });
     await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
     toast(`Reserved ${found.name}.`);
@@ -2255,7 +2372,9 @@ async function renderEventDetail(view, evt){
         end_at: evt.end_at,
         status:"ACTIVE"
       };
-      await sbInsert("reservations", row);
+      row.reserved_by = _currentUser()?.id || null;
+      row.reserved_by_email = _currentUser()?.email || null;
+      await sbInsertAudit("reservations", row);
     }
 
     await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
@@ -2341,7 +2460,7 @@ async function renderEventDetail(view, evt){
     if(!found){ toast("No matching gear found for that QR code."); return; }
     const resv = reservations.find(r=>r.gear_item_id===found.id);
     if(!resv){ toast("That gear is not currently checked out on this event."); return; }
-    await sbUpdate("reservations", resv.id, { status:"RETURNED" });
+    await sbUpdateAudit("reservations", resv.id, { status:"RETURNED", returned_by: _currentUser()?.id || null, returned_by_email: _currentUser()?.email || null, returned_at: new Date().toISOString() });
     toast(`Returned ${found.name}.`);
     render();
   };
@@ -2383,7 +2502,7 @@ async function renderEventDetail(view, evt){
         // Mark this event's ACTIVE reservations returned (so they are available again)
         const {error: rErr} = await supabase
           .from("reservations")
-          .update({ status:"RETURNED" })
+          .update({ status:"RETURNED", returned_by: _currentUser()?.id || null, returned_by_email: _currentUser()?.email || null, returned_at: nowIso })
           .eq("event_id", evt.id)
           .eq("status","ACTIVE");
         if(rErr) throw rErr;
@@ -2397,7 +2516,7 @@ async function renderEventDetail(view, evt){
             .eq("status","OPEN");
         }catch(_){}
 
-        await sbUpdate("events", evt.id, { status:"CLOSED", end_at: nowIso, updated_at: nowIso });
+        await sbUpdateAudit("events", evt.id, { status:"CLOSED", end_at: nowIso, updated_at: nowIso, closed_by: _currentUser()?.id || null, closed_by_email: _currentUser()?.email || null });
 
         toast("Returned. Gear is available again.");
         render();
