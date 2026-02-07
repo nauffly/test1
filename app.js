@@ -658,12 +658,10 @@ async function upsertMyDisplayName(displayName){
   state.displayName = nm;
   localStorage.setItem("javi_display_name", nm);
 
-  // Update auth metadata (best-effort)
-  try{
-    await supabase.auth.updateUser({ data:{ display_name:nm, name:nm, full_name:nm } });
-  }catch(_){ }
+  // Update auth user_metadata (best-effort)
+  try{ await supabase.auth.updateUser({ data:{ display_name:nm, name:nm, full_name:nm } }); }catch(_){ }
 
-  // Update profiles table (best-effort; may be locked down by RLS)
+  // Update profiles table (best-effort)
   try{
     const {error} = await supabase
       .from("profiles")
@@ -671,15 +669,14 @@ async function upsertMyDisplayName(displayName){
     if(error) throw error;
   }catch(_){ }
 
-  // IMPORTANT: also persist on workspace_members so teammates can see names even if profiles is not readable.
+  // ALSO persist onto workspace_members so teammates can see it even if profiles is locked down by RLS.
   if(state.workspaceId){
     try{
-      const {error} = await supabase
+      await supabase
         .from("workspace_members")
         .update({ display_name: nm })
         .eq("workspace_id", state.workspaceId)
         .eq("user_id", state.user.id);
-      if(error) throw error;
     }catch(_){ }
   }
 }
@@ -1036,11 +1033,6 @@ async function ensureWorkspaceSelected(view){
   state.workspaceRole = selected.role;
   persistWorkspaceToLocalStorage();
 
-  // Best-effort: ensure your current display name is written to workspace_members so teammates can see it.
-  try{
-    if(state.displayName) await upsertMyDisplayName(state.displayName);
-  }catch(_){ }
-
   // Optional: expose a quick switcher in the hamburger menu (if present)
   try{
     wireWorkspaceMenu(workspaces);
@@ -1085,14 +1077,7 @@ async function tryAcceptInviteIfPresent(){
   const token = parseInviteTokenFromHash();
   if(!token || !state.user) return false;
 
-  const currentName = pickDisplayName(state.user);
-  if(!currentName){
-    // No prompts during sign-in / invite accept. Use a stable fallback until user sets a real name in Workspace.
-    const email = String(state.user?.email || "").trim();
-    const fallback = email ? (email.split("@")[0] || "") : "";
-    if(fallback) await upsertMyDisplayName(fallback);
-  }
-
+  // Do not prompt for display name here. Users set their name in Workspace → Your profile.
   try{
     // Attempt common RPC signatures
     try{
@@ -1148,8 +1133,6 @@ async function fetchWorkspaceMembers(workspaceId){
   if(error) throw error;
 
   const rows = data || [];
-
-  // Best-effort: pull richer names from profiles (may be blocked by RLS).
   const nameMap = await fetchDisplayNamesForUserIds(rows.map(r=>r.user_id));
 
   return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || r.display_name || "" }));
@@ -1704,30 +1687,13 @@ function renderAuth(view){
   const pass = el("input",{class:"input", placeholder:"Password", type:"password", style:"margin-top:10px"});
   const msg = el("div",{class:"small muted", style:"margin-top:10px"},[""]);
 
-  function deriveFallbackName(user){
-    const e = String(user?.email || "").trim();
-    if(!e) return "";
-    return e.split("@")[0] || "";
-  }
-
   const row = el("div",{class:"row", style:"justify-content:flex-end; margin-top:12px"},[
     el("button",{class:"btn secondary", onClick: async ()=>{
       msg.textContent = "Creating account…";
       try{
-        const {data, error} = await supabase.auth.signUp({
-          email: email.value.trim(),
-          password: pass.value
-        });
+        const {error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-
-        // Set a non-random fallback display name (email prefix) so teammates don't see UUIDs.
-        if(data?.user){
-          state.user = data.user;
-          const fallback = pickDisplayName(state.user) || deriveFallbackName(state.user);
-          if(fallback) await upsertMyDisplayName(fallback);
-        }
-
-        msg.textContent = "Account created. After signing in, set your name in Workspace → Your profile.";
+        msg.textContent = "Account created. Sign in, then set your name in Workspace → Your profile.";
       }catch(e){
         msg.textContent = e.message || String(e);
       }
@@ -1735,18 +1701,9 @@ function renderAuth(view){
     el("button",{class:"btn", onClick: async ()=>{
       msg.textContent = "Signing in…";
       try{
-        const {data, error} = await supabase.auth.signInWithPassword({
-          email: email.value.trim(),
-          password: pass.value
-        });
+        const {data, error} = await supabase.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-
         state.user = data?.user || state.user;
-
-        // Ensure we have a stable (non-UUID) fallback name even before the user customizes it in Workspace.
-        const fallback = pickDisplayName(state.user) || deriveFallbackName(state.user);
-        if(fallback) await upsertMyDisplayName(fallback);
-
         msg.textContent = "Signed in.";
       }catch(e){
         msg.textContent = e.message || String(e);
