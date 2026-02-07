@@ -1180,12 +1180,9 @@ function parseInviteTokenFromHash(){
   return null;
 }
 
-function isAcceptInviteRpcFallbackError(err){
+function isMissingAcceptInviteRpcError(err){
   const msg = String(err?.message || err || "").toLowerCase();
-  return (
-    (msg.includes("javi_accept_invite") && (msg.includes("could not find the function") || msg.includes("schema cache") || msg.includes("does not exist"))) ||
-    msg.includes("column i.role does not exist")
-  );
+  return msg.includes("javi_accept_invite") && (msg.includes("could not find the function") || msg.includes("schema cache") || msg.includes("does not exist"));
 }
 
 async function acceptInviteViaTables(token){
@@ -1229,18 +1226,26 @@ async function tryAcceptInviteIfPresent(){
 
   // Do not prompt for display name here. Users set their name in Workspace → Your profile.
   try{
+    // Attempt common RPC signatures
+    const rpcArgs = [{ invite_token: token }, { token }, { p_token: token }];
     let rpcErr = null;
-    try{
-      // Required RPC call signature
-      await sbRpc("javi_accept_invite", { p_token: token });
-    }catch(e){
-      rpcErr = e;
+    let acceptedViaRpc = false;
+
+    for(const args of rpcArgs){
+      try{
+        await sbRpc("javi_accept_invite", args);
+        acceptedViaRpc = true;
+        break;
+      }catch(e){
+        rpcErr = e;
+      }
     }
 
-    if(rpcErr){
-      if(isAcceptInviteRpcFallbackError(rpcErr)){
+    // Fallback for environments where the accept-invite RPC was not installed.
+    if(!acceptedViaRpc){
+      if(isMissingAcceptInviteRpcError(rpcErr)){
         await acceptInviteViaTables(token);
-      }else{
+      }else if(rpcErr){
         throw rpcErr;
       }
     }
@@ -1369,6 +1374,33 @@ async function deleteWorkspaceAndAllData(workspaceId){
   }catch(e){
     throw lastErr || e;
   }
+}
+
+async function deleteMyAccountAndWorkspace(){
+  if(!state.workspaceId || !state.user?.id) throw new Error("No workspace selected.");
+
+  const rpcTries = [
+    ["javi_delete_account_and_workspace", { workspace_id: state.workspaceId }],
+    ["javi_delete_account_and_workspace", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { uid: state.user.id, workspace_id: state.workspaceId }]
+  ];
+
+  let lastErr = null;
+  for(const [fn,args] of rpcTries){
+    try{
+      await sbRpc(fn, args);
+      return;
+    }catch(e){
+      lastErr = e;
+    }
+  }
+
+  throw new Error(
+    (lastErr?.message ? `${lastErr.message}. ` : "") +
+    "Account deletion is not configured yet in Supabase. Add an RPC like javi_delete_account_and_workspace (security definer) to delete auth user + workspace, then try again."
+  );
 }
 
 function canManageWorkspace(){
@@ -1587,18 +1619,8 @@ async function renderWorkspace(view){
       try{
         deleteBtn.disabled = true;
         deleteBtn.textContent = "Deleting account…";
-
-        const workspaceId = state.workspaceId;
-
-        // 1) delete workspace + data
-        await supabase.rpc("javi_delete_workspace_and_data", { p_workspace_id: workspaceId });
-
-        // 2) delete auth user
-        await supabase.functions.invoke("delete-me");
-
-        // 3) sign out locally
-        await supabase.auth.signOut();
-
+        await deleteMyAccountAndWorkspace();
+        try{ await supabase.auth.signOut(); }catch(_){ }
         clearWorkspaceSelection();
         localStorage.removeItem("javi_display_name");
         state.displayName = "";
@@ -1934,7 +1956,7 @@ async function renderOnce(){
   if(!cfg){
     const settingsWrap = $("#settingsWrap");
     if(settingsWrap) settingsWrap.style.display = "none";
-    if(nav) nav.style.visibility="hidden";
+    $("#nav").style.visibility="hidden";
     renderNeedsConfig(view);
     return;
   }
@@ -1949,7 +1971,7 @@ async function renderOnce(){
   if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
   const settingsWrap = $("#settingsWrap");
   if(settingsWrap) settingsWrap.style.display = state.user ? "flex" : "none";
-  if(nav) nav.style.visibility = state.user ? "visible" : "hidden";
+  $("#nav").style.visibility = state.user ? "visible" : "hidden";
 
   if(!state.user){
     renderAuth(view);
@@ -3322,7 +3344,7 @@ $("#settingsWorkspaceBtn")?.addEventListener("click", ()=>{
   $("#settingsMenu")?.classList.remove("open");
 });
 
-$("#logoutBtn")?.addEventListener("click", async ()=>{
+$("#logoutBtn").addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
   clearWorkspaceLocalStorage();
