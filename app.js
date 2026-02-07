@@ -1113,9 +1113,6 @@ async function renderWorkspace(view){
       el("h1",{},["Workspace"]),
       el("div",{class:"muted small", style:"margin-top:6px"},[
         state.workspaceName ? `Current: ${state.workspaceName}` : "No workspace selected"
-      ]),
-      el("div",{class:"muted small"},[
-        `Signed in as ${state.displayName || state.user.email}`
       ])
     ]),
     el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[
@@ -1123,6 +1120,40 @@ async function renderWorkspace(view){
       el("button",{class:"btn secondary", onClick:()=>{ openWorkspaceSwitcher(); }},["Switch workspace"])
     ])
   ]));
+
+  const meCard = el("div",{class:"card", style:"margin-bottom:12px"},[]);
+  meCard.appendChild(el("h2",{},["Your profile"]));
+  meCard.appendChild(el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px"},[
+    el("div",{},[
+      el("label",{class:"small muted"},["Email"]),
+      el("input",{class:"input", value: state.user?.email || "", readonly:"readonly"})
+    ]),
+    (()=>{
+      const nameInput = el("input",{class:"input", value: state.displayName || "", placeholder:"How teammates see you"});
+      const saveBtn = el("button",{class:"btn secondary", style:"margin-top:8px", onClick:async ()=>{
+        const nm = (nameInput.value || "").trim();
+        if(!nm){ toast("Name is required."); return; }
+        try{
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving…";
+          await upsertMyDisplayName(nm);
+          toast("Name updated.");
+          render();
+        }catch(e){
+          toast(e?.message || String(e));
+        }finally{
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save name";
+        }
+      }},["Save name"]);
+      return el("div",{},[
+        el("label",{class:"small muted"},["Name shown to others"]),
+        nameInput,
+        saveBtn
+      ]);
+    })()
+  ]));
+  view.appendChild(meCard);
 
   const card = el("div",{class:"card"},[]);
   card.appendChild(el("h2",{},["Members"]));
