@@ -195,10 +195,20 @@ function setupHeaderUX(){
   // Reorder nav links if present
   const nav = document.querySelector("#nav");
   if(nav){
-    const order = ["dashboard","events","gear","kits"];
+    const order = ["dashboard","events","gear","kits","workspace"];
     const links = Array.from(nav.querySelectorAll("a[data-route]"));
     const byRoute = Object.fromEntries(links.map(a=>[a.dataset.route,a]));
     order.forEach(r=>{ if(byRoute[r]) nav.appendChild(byRoute[r]); });
+
+    // Add Workspace link if the HTML nav does not include it
+    if(!nav.querySelector('a[data-route="workspace"]')){
+      const a = document.createElement("a");
+      a.href = "#workspace";
+      a.dataset.route = "workspace";
+      a.textContent = "Workspace";
+      nav.appendChild(a);
+    }
+
   }
 
   // Create hamburger + menu (append to BODY so it always exists, regardless of header markup)
@@ -232,7 +242,9 @@ function setupHeaderUX(){
     btn.addEventListener("click",(e)=>{ e.preventDefault(); menu.classList.toggle("open"); });
 
     menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); themeBtn?.click(); });
-    menu.querySelector("#menuWorkspaceBtn")?.addEventListener("click",()=>{ close(); try{ openWorkspaceModal?.(); }catch(_e){} });
+
+    // Workspace shortcut
+    menu.querySelector("#menuWorkspaceBtn")?.addEventListener("click",()=>{ close(); location.hash = "#workspace"; });
     menu.querySelector("#menuLogoutBtn")?.addEventListener("click",()=>{ close(); logoutBtn?.click(); });
 
     document.addEventListener("click",(e)=>{
@@ -702,106 +714,6 @@ async function sbRpc(fn, args){
   return data;
 }
 
-async function createWorkspaceInvite({expiresHours=168, maxUses=10}={}){
-  if(!state.workspaceId) throw new Error("No workspace selected.");
-  // SECURITY DEFINER: creates an invite token for your current workspace (owner/admin only)
-  const token = await sbRpc("javi_create_invite", {
-    workspace_id: state.workspaceId,
-    expires_hours: expiresHours,
-    max_uses: maxUses
-  });
-  return token;
-}
-
-async function acceptWorkspaceInvite(inviteToken){
-  const token = String(inviteToken||"").trim();
-  if(!token) throw new Error("Missing invite token.");
-  // SECURITY DEFINER: validates token, adds you to workspace_members, returns workspace_id
-  const wid = await sbRpc("javi_accept_invite", { invite_token: token });
-  return wid;
-}
-
-function buildJoinUrl(token){
-  const base = `${location.origin}${location.pathname}`;
-  return `${base}#join/${encodeURIComponent(token)}`;
-}
-
-function openWorkspaceModal(){
-  // Allow opening even if not signed in; show a helpful message.
-  if(!state.user){
-    modal(el("div",{},[
-      el("h2",{},["Workspace"]),
-      el("div",{class:"muted", style:"margin-top:6px"},["Sign in to manage your workspace."])
-    ]));
-    return;
-  }
-
-  const role = (state.workspaceRole||"member");
-  const wrap = el("div",{},[
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
-      el("h2",{},["Workspace"]),
-      el("span",{class:"badge"},[role])
-    ]),
-    el("div",{class:"muted small", style:"margin-top:6px"},[
-      state.workspaceName ? `Current: ${state.workspaceName}` : "No workspace selected."
-    ]),
-    el("hr",{class:"sep"})
-  ]);
-
-  const canInvite = ["owner","admin"].includes(role);
-
-  const inviteStatus = el("div",{class:"small muted", style:"margin-top:8px"},[""]);
-  const linkInput = el("input",{class:"input", value:"", readonly:"readonly"});
-  const copyBtn = el("button",{class:"btn secondary", type:"button", onClick: async ()=>{
-    const v = linkInput.value;
-    if(!v) return;
-    try{
-      await navigator.clipboard.writeText(v);
-      toast("Invite link copied.");
-    }catch(_e){
-      linkInput.focus();
-      linkInput.select();
-      document.execCommand?.("copy");
-      toast("Copied (fallback).");
-    }
-  }},["Copy link"]);
-
-  const createBtn = el("button",{class:"btn", type:"button", onClick: async ()=>{
-    if(!canInvite){
-      toast("Only owners/admins can create invites.");
-      return;
-    }
-    inviteStatus.textContent = "Creating invite link…";
-    try{
-      const token = await createWorkspaceInvite({expiresHours:168, maxUses:25});
-      const url = buildJoinUrl(token);
-      linkInput.value = url;
-      inviteStatus.textContent = "Share this link with your teammate. They will join after signing in.";
-    }catch(e){
-      inviteStatus.textContent = e.message || String(e);
-    }
-  }},["Create invite link"]);
-
-  const inviteCard = el("div",{class:"card"},[
-    el("div",{style:"font-weight:800"},["Invite teammates"]),
-    el("div",{class:"muted small", style:"margin-top:6px"},[
-      canInvite
-        ? "Create a link and send it to a teammate. They will join this workspace after signing in."
-        : "Ask a workspace owner/admin to create an invite link."
-    ]),
-    el("div",{class:"row", style:"gap:8px; margin-top:10px; flex-wrap:wrap"},[
-      createBtn,
-      copyBtn
-    ]),
-    linkInput,
-    inviteStatus
-  ]);
-
-  wrap.appendChild(inviteCard);
-
-  modal(wrap);
-}
-
 async function fetchMyWorkspaces(){
   // Requires: workspace_members has FK to workspaces as "workspaces"
   const {data, error} = await supabase
@@ -864,6 +776,235 @@ async function ensureWorkspaceSelected(view){
 
   return true;
 }
+
+/** ---------- Workspace members + invite links ---------- **/
+function parseInviteTokenFromHash(){
+  const raw = (location.hash || "").replace(/^#/, "");
+  // Supported:
+  //   #invite=<token>
+  //   #workspace?invite=<token>
+  //   #workspace/invite/<token>
+  if(!raw) return null;
+
+  // #invite=...
+  if(raw.toLowerCase().startsWith("invite=")) return raw.split("=").slice(1).join("=").trim() || null;
+
+  // #workspace?invite=...
+  if(raw.toLowerCase().startsWith("workspace?")){
+    const qs = raw.split("?")[1] || "";
+    const params = new URLSearchParams(qs);
+    return (params.get("invite") || params.get("token") || "").trim() || null;
+  }
+
+  // #workspace/invite/<token>
+  const m = raw.match(/workspace\/invite\/(.+)$/i);
+  if(m) return decodeURIComponent(m[1]).trim() || null;
+
+  // Any hash containing invite=
+  if(raw.toLowerCase().includes("invite=")){
+    const idx = raw.toLowerCase().indexOf("invite=");
+    return raw.slice(idx + "invite=".length).trim() || null;
+  }
+
+  return null;
+}
+
+async function tryAcceptInviteIfPresent(){
+  const token = parseInviteTokenFromHash();
+  if(!token || !state.user) return false;
+
+  try{
+    // Attempt common RPC signatures
+    try{
+      await sbRpc("javi_accept_invite", { invite_token: token });
+    }catch(e1){
+      try{
+        await sbRpc("javi_accept_invite", { token });
+      }catch(e2){
+        await sbRpc("javi_accept_invite", { p_token: token });
+      }
+    }
+
+    toast("Invite accepted. You're in!");
+    // Clear hash and force workspace refetch
+    location.hash = "#dashboard";
+    clearWorkspaceSelection();
+    return true;
+  }catch(e){
+    console.warn(e);
+    toast(e?.message || "Invite failed.");
+    // Keep the hash so user can retry after fixing policies
+    return false;
+  }
+}
+
+async function fetchWorkspaceMembers(workspaceId){
+  const {data, error} = await supabase
+    .from("workspace_members")
+    .select("user_id, role, created_at")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", {ascending:true});
+  if(error) throw error;
+  return data || [];
+}
+
+async function createInviteLink(workspaceId, role="member"){
+  // Returns a full URL with #invite=<token>
+  let token = null;
+
+  // Try multiple RPC signatures so your SQL can vary slightly.
+  const tries = [
+    ["javi_create_invite", { workspace_id: workspaceId, role }],
+    ["javi_create_invite", { p_workspace_id: workspaceId, p_role: role }],
+    ["javi_create_invite", { wid: workspaceId, invite_role: role }]
+  ];
+
+  let lastErr = null;
+  for(const [fn, args] of tries){
+    try{
+      const out = await sbRpc(fn, args);
+      token = (typeof out === "string") ? out : (out?.token || out?.invite_token || out?.id || out?.value);
+      if(token) break;
+    }catch(e){
+      lastErr = e;
+    }
+  }
+
+  if(!token){
+    if(lastErr) throw lastErr;
+    throw new Error("Could not create invite token.");
+  }
+
+  const base = location.href.split("#")[0];
+  return `${base}#invite=${encodeURIComponent(token)}`;
+}
+
+function canManageWorkspace(){
+  return String(state.workspaceRole || "").toLowerCase() === "owner";
+}
+
+async function renderWorkspace(view){
+  view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
+    el("div",{},[
+      el("h1",{},["Workspace"]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        state.workspaceName ? `Current: ${state.workspaceName}` : "No workspace selected"
+      ]),
+      el("div",{class:"muted small"},[
+        `Signed in as ${state.user.email}`
+      ])
+    ]),
+    el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[
+      el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Back"]),
+      el("button",{class:"btn secondary", onClick:()=>{ clearWorkspaceSelection(); render(); }},["Switch workspace"])
+    ])
+  ]));
+
+  const card = el("div",{class:"card"},[]);
+  card.appendChild(el("h2",{},["Members"]));
+  card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+    "If you can't see other members here, update your Supabase RLS policy for workspace_members (see note below)."
+  ]));
+  card.appendChild(el("hr",{class:"sep"}));
+
+  const listEl = el("div",{class:"stack", style:"gap:8px"},[ el("div",{class:"muted"},["Loading…"]) ]);
+  card.appendChild(listEl);
+
+  const inviteBox = el("div",{style:"margin-top:14px"},[]);
+  card.appendChild(inviteBox);
+
+  // Owner-only: invite link generator
+  if(canManageWorkspace()){
+    inviteBox.appendChild(el("hr",{class:"sep"}));
+    inviteBox.appendChild(el("div",{style:"font-weight:800"},["Invite users"]));
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+      "Create a link and send it to someone. When they sign in, the app will add them to this workspace."
+    ]));
+
+    const out = el("input",{class:"input", readonly:"readonly", value:"", placeholder:"Invite link will appear here", style:"margin-top:10px"});
+    const actions = el("div",{class:"row", style:"gap:10px; flex-wrap:wrap; margin-top:10px"},[]);
+    const btn = el("button",{class:"btn", onClick: async ()=>{
+      try{
+        btn.disabled = true;
+        btn.textContent = "Creating…";
+        const link = await createInviteLink(state.workspaceId, "member");
+        out.value = link;
+        try{
+          await navigator.clipboard?.writeText(link);
+          toast("Invite link copied.");
+        }catch(_){
+          toast("Invite link created.");
+        }
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        btn.disabled = false;
+        btn.textContent = "Create invite link";
+      }
+    }},["Create invite link"]);
+
+    const copyBtn = el("button",{class:"btn secondary", onClick: async ()=>{
+      try{
+        await navigator.clipboard?.writeText(out.value || "");
+        toast("Copied.");
+      }catch(_){
+        toast("Copy not available.");
+      }
+    }},["Copy"]);
+
+    actions.appendChild(btn);
+    actions.appendChild(copyBtn);
+    inviteBox.appendChild(out);
+    inviteBox.appendChild(actions);
+  } else {
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:10px"},[
+      "Only the workspace owner can create invite links."
+    ]));
+  }
+
+  view.appendChild(card);
+
+  // Load members
+  try{
+    const members = await fetchWorkspaceMembers(state.workspaceId);
+    listEl.innerHTML = "";
+    if(!members.length){
+      listEl.appendChild(el("div",{class:"muted"},["No members found."]));
+    } else {
+      for(const m of members){
+        const isMe = m.user_id === state.user.id;
+        listEl.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+          el("div",{class:"stack", style:"min-width:0"},[
+            el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[
+              isMe ? `${state.user.email} (you)` : `User: ${m.user_id}`
+            ]),
+            el("div",{class:"muted small"},[
+              `Role: ${m.role || "member"}`
+            ])
+          ]),
+          el("span",{class:"badge"},[isMe ? "You" : (m.role||"member")])
+        ]));
+      }
+    }
+  }catch(e){
+    listEl.innerHTML = "";
+    listEl.appendChild(el("div",{class:"muted"},[
+      e?.message || String(e)
+    ]));
+  }
+
+  // RLS note (in-app)
+  const note = el("div",{class:"card", style:"margin-top:12px"},[
+    el("div",{style:"font-weight:800"},["Supabase note (if members list is blank)"]),
+    el("div",{class:"small muted", style:"margin-top:6px"},[
+      "In Supabase, make sure workspace_members SELECT policy allows any workspace member to read rows in that workspace.",
+      el("br"),
+      "Example: using (public.is_workspace_member(workspace_id))"
+    ])
+  ]);
+  view.appendChild(note);
+}
+
 
 function renderCreateWorkspace(view){
   const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
@@ -1108,55 +1249,14 @@ async function renderOnce(){
     return;
   }
 
+  // Accept invite links (if the URL contains #invite=...)
+  if(await tryAcceptInviteIfPresent()) { await render(); return; }
+
   // workspace gate (multi-tenant)
   if(!(await ensureWorkspaceSelected(view))) return;
 
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
-
-  // Join route: #join/<token>
-  if(state.route==="join"){
-    const token = hash.split("/")[1] || "";
-    if(!token){
-      view.appendChild(el("div",{class:"card"},["Missing invite token."]));
-      return;
-    }
-    // If not signed in, show auth with a hint; after sign-in, user can refresh the join link.
-    if(!state.user){
-      view.appendChild(el("div",{class:"card", style:"margin-bottom:12px"},[
-        el("h2",{},["Join workspace"]),
-        el("div",{class:"muted small", style:"margin-top:6px"},[
-          "Sign in (or create an account) to join this workspace. After signing in, reload this page if it doesn’t auto-join."
-        ])
-      ]));
-      renderAuth(view);
-      return;
-    }
-
-    // Ensure Supabase migration exists (workspace tables + RPC)
-    try{
-      const wid = await acceptWorkspaceInvite(token);
-      // Refresh memberships
-      const wss = await fetchMyWorkspaces();
-      const joined = wss.find(w=>w.id===wid) || wss[0];
-      if(joined){
-        state.workspaceId = joined.id;
-        state.workspaceName = joined.name;
-        state.workspaceRole = joined.role;
-        persistWorkspaceToLocalStorage();
-      }
-      toast("Joined workspace.");
-      location.hash = "#dashboard";
-      render();
-      return;
-    }catch(e){
-      view.appendChild(el("div",{class:"card"},[
-        el("h2",{},["Join failed"]),
-        el("div",{class:"muted", style:"margin-top:6px"},[e.message || String(e)])
-      ]));
-      return;
-    }
-  }
   document.querySelectorAll("#nav a").forEach(a=>{
     a.classList.toggle("active", a.dataset.route===state.route);
   });
@@ -1165,6 +1265,7 @@ async function renderOnce(){
   if(state.route==="gear") return renderGear(view);
   if(state.route==="events") return renderEvents(view);
   if(state.route==="kits") return renderKits(view);
+  if(state.route==="workspace") return renderWorkspace(view);
 
   view.appendChild(el("div",{class:"card"},["Not found."]));
 }
@@ -1218,10 +1319,7 @@ async function renderDashboard(view){
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
       el("h1",{},["Dashboard"]),
-      el("div",{class:"muted small"},[`Signed in as ${state.user.email}`]),
-      state.workspaceName ? el("div",{class:"muted small", style:"margin-top:4px"},[
-        `Workspace: ${state.workspaceName} `,
-      ]) : null
+      el("div",{class:"muted small"},[`Signed in as ${state.user.email}`])
     ]),
     el("div",{class:"row"},[
       el("button",{class:"btn secondary", onClick:()=>{location.hash="#events";}},["New event"]),
