@@ -81,6 +81,90 @@ function fmtDate(d){
   }catch(_){ return d; }
 }
 
+function normalizeScanText(v){
+  return String(v || "").trim().toLowerCase();
+}
+
+function findGearByScan(gearItems, rawValue){
+  const normalized = normalizeScanText(rawValue);
+  if(!normalized) return null;
+
+  return (gearItems || []).find(g=>{
+    const base = normalizeScanText(baseName(g.name));
+    const full = normalizeScanText(g.name);
+    const id = normalizeScanText(g.id);
+    const tag = normalizeScanText(g.asset_tag);
+    const serial = normalizeScanText(g.serial);
+    const qrCode = normalizeScanText(g.qr_code);
+    return normalized===id || normalized===tag || normalized===serial || normalized===qrCode || normalized===full || normalized===base;
+  }) || null;
+}
+
+function openQrScannerModal({ title="Scan QR", onDetect }){
+  const hasBarcodeDetector = typeof window.BarcodeDetector !== "undefined";
+  if(!hasBarcodeDetector || !navigator.mediaDevices?.getUserMedia){
+    const fallback = prompt("QR scan not available on this device/browser. Paste scanned code:");
+    if(fallback && typeof onDetect === "function") onDetect(fallback);
+    return;
+  }
+
+  const detector = new BarcodeDetector({ formats:["qr_code"] });
+  const video = el("video",{autoplay:"autoplay", playsinline:"playsinline", style:"width:100%; border-radius:10px; border:1px solid var(--border); background:#000"});
+  const hint = el("div",{class:"small muted", style:"margin-top:8px"},["Point camera at a gear QR code."]);
+  let rafId = null;
+  let active = true;
+  let stream = null;
+
+  const stop = ()=>{
+    active = false;
+    if(rafId) cancelAnimationFrame(rafId);
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+  };
+
+  const m = modal(el("div",{},[
+    el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+      el("h2",{},[title]),
+      el("span",{class:"badge"},["Camera"])
+    ]),
+    el("hr",{class:"sep"}),
+    video,
+    hint,
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{ e.preventDefault(); stop(); m.close(); }},["Cancel"])
+    ])
+  ]));
+
+  const prevClose = m.close;
+  m.close = ()=>{ stop(); prevClose(); };
+
+  const tick = async ()=>{
+    if(!active) return;
+    try{
+      const codes = await detector.detect(video);
+      if(codes?.length){
+        const val = codes[0].rawValue || "";
+        if(val && typeof onDetect === "function") onDetect(val);
+        m.close();
+        return;
+      }
+    }catch(_){ }
+    rafId = requestAnimationFrame(tick);
+  };
+
+  navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:"environment" } }, audio:false })
+    .then(s=>{
+      stream = s;
+      video.srcObject = s;
+      video.play().catch(()=>{});
+      rafId = requestAnimationFrame(tick);
+    })
+    .catch(err=>{
+      stop();
+      m.close();
+      toast(err?.message || "Camera access failed.");
+    });
+}
+
 function $(sel){ return document.querySelector(sel); }
 function el(tag, attrs={}, children=[]){
   const e=document.createElement(tag);
@@ -1009,7 +1093,7 @@ async function renderGear(view){
     list.innerHTML="";
     const items = groupsAll.filter(gr => {
       const g = gr.primary;
-      const hay = (gr.name + " " + (g.description||"") + " " + (g.asset_tag||"") + " " + (g.serial||"")).toLowerCase();
+      const hay = (gr.name + " " + (g.description||"") + " " + (g.asset_tag||"") + " " + (g.serial||"") + " " + (g.qr_code||"")).toLowerCase();
       return (!cc || gr.category===cc) && (!qq || hay.includes(qq));
     });
     if(!items.length){
@@ -1104,6 +1188,7 @@ async function openGearModal(existing=null, existingQty=null){
 
   const assetTag=el("input",{class:"input", placeholder:"Asset tag (optional)", value: existing?.asset_tag || ""});
   const serial=el("input",{class:"input", placeholder:"Serial # (optional)", value: existing?.serial || ""});
+  const qrCode=el("input",{class:"input", placeholder:"QR code value (optional)", value: existing?.qr_code || ""});
   const location=el("input",{class:"input", placeholder:"Location (optional)", value: existing?.location || ""});
 
   const imgUrl=el("input",{class:"input", placeholder:"Image URL (optional)", value: existing?.image_url || ""});
@@ -1134,6 +1219,7 @@ async function openGearModal(existing=null, existingQty=null){
           el("div",{},[el("label",{class:"small muted"},["Asset tag"]), assetTag]),
           el("div",{},[el("label",{class:"small muted"},["Serial #"]), serial]),
         ]),
+        el("label",{class:"small muted"},["QR code value"]), qrCode,
         el("label",{class:"small muted"},["Location"]), location,
       ]),
       el("div",{class:"stack"},[
@@ -1154,6 +1240,7 @@ async function openGearModal(existing=null, existingQty=null){
           description: desc.value.trim() || "",
           asset_tag: assetTag.value.trim() || "",
           serial: serial.value.trim() || "",
+          qr_code: qrCode.value.trim() || "",
           location: location.value.trim() || "",
           image_url: imgUrl.value.trim() || "",
           updated_at: now
@@ -1194,6 +1281,7 @@ async function openGearModal(existing=null, existingQty=null){
                   name: `${newBase} #${n}`,
                   asset_tag: "", // avoid duplicating tags/serials across copies
                   serial: "",
+                  qr_code: "",
                   created_at: now,
                   updated_at: now
                 };
@@ -1228,6 +1316,7 @@ async function openGearModal(existing=null, existingQty=null){
                 name: `${row.name} #${n}`,
                 asset_tag: "",
                 serial: "",
+                qr_code: "",
                 created_at: now,
                 updated_at: now
               };
@@ -1676,6 +1765,34 @@ async function renderEventDetail(view, evt){
     }
   }
 
+
+  async function reserveFromScannedGear(rawValue){
+    const found = findGearByScan(gear, rawValue);
+    if(!found){
+      toast("No matching gear found for that QR code.");
+      return;
+    }
+    if(existingReservedIds.has(found.id)){
+      toast("That item is already reserved on this event.");
+      return;
+    }
+    if(blockedIds.has(found.id)){
+      toast("That item is booked in this event window.");
+      return;
+    }
+
+    await sbInsert("reservations", {
+      event_id: evt.id,
+      gear_item_id: found.id,
+      start_at: evt.start_at,
+      end_at: evt.end_at,
+      status:"ACTIVE"
+    });
+    await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
+    toast(`Reserved ${found.name}.`);
+    render();
+  }
+
   async function reserveFromGroup(grp, qtyWanted){
     const want = Math.max(1, parseInt(qtyWanted,10)||1);
 
@@ -1721,6 +1838,10 @@ async function renderEventDetail(view, evt){
   left.appendChild(evtGearCat);
   left.appendChild(evtGearSearch);
   left.appendChild(evtGearPick);
+  left.appendChild(el("button",{class:"btn secondary", style:"margin-top:8px", onClick:()=>openQrScannerModal({
+    title:"Scan gear to reserve",
+    onDetect:(value)=>reserveFromScannedGear(value)
+  })},["Scan QR to reserve"]));
   left.appendChild(el("div",{class:"small muted", style:"margin-top:6px"},["⛔ booked = reserved or checked out during this event window"]));
   // Kits quick-add (below Select gear)
   left.appendChild(evtKitPick);
@@ -1776,6 +1897,33 @@ async function renderEventDetail(view, evt){
 
   const now = new Date();
   const ongoing = (new Date(evt.start_at) <= now) && (new Date(evt.end_at) >= now) && evt.status!=="CANCELED";
+
+  const canScanReturn = ongoing && reservations.length>0;
+  const returnReservationByScan = async (rawValue)=>{
+    const found = findGearByScan(gear, rawValue);
+    if(!found){ toast("No matching gear found for that QR code."); return; }
+    const resv = reservations.find(r=>r.gear_item_id===found.id);
+    if(!resv){ toast("That gear is not currently checked out on this event."); return; }
+    await sbUpdate("reservations", resv.id, { status:"RETURNED" });
+    toast(`Returned ${found.name}.`);
+    render();
+  };
+
+  right.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-bottom:8px"},[
+    el("button",{
+      class:`btn secondary${canScanReturn ? "" : " disabled"}`,
+      onClick:()=>{
+        if(!canScanReturn){
+          toast(ongoing ? "No checked-out items to return yet." : "Return scanning is only available while the event is ongoing.");
+          return;
+        }
+        openQrScannerModal({
+          title:"Scan gear to return",
+          onDetect:(value)=>returnReservationByScan(value)
+        });
+      }
+    },["Scan QR to return item"])
+  ]));
 
   if(!ongoing){
     right.appendChild(el("div",{class:"muted"},["This event is not currently ongoing."]));

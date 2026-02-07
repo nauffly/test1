@@ -12,11 +12,15 @@ create table if not exists public.gear_items (
   description text default '',
   asset_tag text default '',
   serial text default '',
+  qr_code text default '',
   location text default '',
   image_url text default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- For existing projects, add missing QR column safely
+alter table public.gear_items add column if not exists qr_code text default '';
 
 -- EVENTS
 create table if not exists public.events (
