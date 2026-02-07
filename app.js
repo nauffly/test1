@@ -196,20 +196,10 @@ function setupHeaderUX(){
   // Reorder nav links if present
   const nav = document.querySelector("#nav");
   if(nav){
-    const order = ["dashboard","events","gear","kits","workspace"];
+    const order = ["dashboard","events","gear","kits"];
     const links = Array.from(nav.querySelectorAll("a[data-route]"));
     const byRoute = Object.fromEntries(links.map(a=>[a.dataset.route,a]));
     order.forEach(r=>{ if(byRoute[r]) nav.appendChild(byRoute[r]); });
-
-    // Add Workspace link if the HTML nav does not include it
-    if(!nav.querySelector('a[data-route="workspace"]')){
-      const a = document.createElement("a");
-      a.href = "#workspace";
-      a.dataset.route = "workspace";
-      a.textContent = "Workspace";
-      nav.appendChild(a);
-    }
-
   }
 
   // Create hamburger + menu (append to BODY so it always exists, regardless of header markup)
