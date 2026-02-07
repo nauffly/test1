@@ -1323,6 +1323,33 @@ async function deleteWorkspaceAndAllData(workspaceId){
   }
 }
 
+async function deleteMyAccountAndWorkspace(){
+  if(!state.workspaceId || !state.user?.id) throw new Error("No workspace selected.");
+
+  const rpcTries = [
+    ["javi_delete_account_and_workspace", { workspace_id: state.workspaceId }],
+    ["javi_delete_account_and_workspace", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { uid: state.user.id, workspace_id: state.workspaceId }]
+  ];
+
+  let lastErr = null;
+  for(const [fn,args] of rpcTries){
+    try{
+      await sbRpc(fn, args);
+      return;
+    }catch(e){
+      lastErr = e;
+    }
+  }
+
+  throw new Error(
+    (lastErr?.message ? `${lastErr.message}. ` : "") +
+    "Account deletion is not configured yet in Supabase. Add an RPC like javi_delete_account_and_workspace (security definer) to delete auth user + workspace, then try again."
+  );
+}
+
 function canManageWorkspace(){
   return String(state.workspaceRole || "").toLowerCase() === "owner";
 }
@@ -1539,20 +1566,8 @@ async function renderWorkspace(view){
       try{
         deleteBtn.disabled = true;
         deleteBtn.textContent = "Deleting account…";
-
-        const workspaceId = state.workspaceId;
-
-        // 1) delete workspace + data
-        const { error: workspaceDeleteError } = await supabase.rpc("javi_delete_workspace_and_data", { p_workspace_id: workspaceId });
-        if(workspaceDeleteError) throw workspaceDeleteError;
-
-        // 2) delete auth user
-        const { error: deleteMeError } = await supabase.functions.invoke("delete-me");
-        if(deleteMeError) throw deleteMeError;
-
-        // 3) sign out locally
-        await supabase.auth.signOut();
-
+        await deleteMyAccountAndWorkspace();
+        try{ await supabase.auth.signOut(); }catch(_){ }
         clearWorkspaceSelection();
         localStorage.removeItem("javi_display_name");
         state.displayName = "";
@@ -1888,7 +1903,7 @@ async function renderOnce(){
   if(!cfg){
     const settingsWrap = $("#settingsWrap");
     if(settingsWrap) settingsWrap.style.display = "none";
-    if(nav) nav.style.visibility="hidden";
+    $("#nav").style.visibility="hidden";
     renderNeedsConfig(view);
     return;
   }
@@ -1903,7 +1918,7 @@ async function renderOnce(){
   if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
   const settingsWrap = $("#settingsWrap");
   if(settingsWrap) settingsWrap.style.display = state.user ? "flex" : "none";
-  if(nav) nav.style.visibility = state.user ? "visible" : "hidden";
+  $("#nav").style.visibility = state.user ? "visible" : "hidden";
 
   if(!state.user){
     renderAuth(view);
@@ -3276,7 +3291,7 @@ $("#settingsWorkspaceBtn")?.addEventListener("click", ()=>{
   $("#settingsMenu")?.classList.remove("open");
 });
 
-$("#logoutBtn")?.addEventListener("click", async ()=>{
+$("#logoutBtn").addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
   clearWorkspaceLocalStorage();
