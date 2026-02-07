@@ -1323,6 +1323,33 @@ async function deleteWorkspaceAndAllData(workspaceId){
   }
 }
 
+async function deleteMyAccountAndWorkspace(){
+  if(!state.workspaceId || !state.user?.id) throw new Error("No workspace selected.");
+
+  const rpcTries = [
+    ["javi_delete_account_and_workspace", { workspace_id: state.workspaceId }],
+    ["javi_delete_account_and_workspace", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { p_workspace_id: state.workspaceId }],
+    ["javi_delete_my_account", { uid: state.user.id, workspace_id: state.workspaceId }]
+  ];
+
+  let lastErr = null;
+  for(const [fn,args] of rpcTries){
+    try{
+      await sbRpc(fn, args);
+      return;
+    }catch(e){
+      lastErr = e;
+    }
+  }
+
+  throw new Error(
+    (lastErr?.message ? `${lastErr.message}. ` : "") +
+    "Account deletion is not configured yet in Supabase. Add an RPC like javi_delete_account_and_workspace (security definer) to delete auth user + workspace, then try again."
+  );
+}
+
 function canManageWorkspace(){
   return String(state.workspaceRole || "").toLowerCase() === "owner";
 }
@@ -1525,32 +1552,35 @@ async function renderWorkspace(view){
       el("hr",{class:"sep"}),
       el("div",{style:"font-weight:800; color:var(--danger)"},["Danger zone"]),
       el("div",{class:"muted small", style:"margin-top:6px"},[
-        "Delete this workspace and all data (events, gear, kits, reservations, checkouts, memberships) for every user in it."
+        "Delete your account. This also deletes your workspace and all associated data in Supabase (events, gear, kits, reservations, checkouts, and memberships)."
       ])
     ]);
     const deleteBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick:async ()=>{
-      if(!state.workspaceId) return;
-      const confirmName = prompt(`Type the workspace name (${state.workspaceName || "workspace"}) to confirm deletion:`);
+      if(!state.workspaceId || !state.user?.id) return;
+      const confirmName = prompt(`Type the workspace name (${state.workspaceName || "workspace"}) to confirm account deletion:`);
       if((confirmName||"").trim() !== String(state.workspaceName||"").trim()){
         toast("Workspace name did not match. Deletion canceled.");
         return;
       }
-      if(!confirm("Final confirmation: permanently delete this workspace and all data for all users?")) return;
+      if(!confirm("Final confirmation: permanently delete your account and this workspace for all users?")) return;
       try{
         deleteBtn.disabled = true;
-        deleteBtn.textContent = "Deleting…";
-        await deleteWorkspaceAndAllData(state.workspaceId);
-        toast("Workspace deleted.");
+        deleteBtn.textContent = "Deleting account…";
+        await deleteMyAccountAndWorkspace();
+        try{ await supabase.auth.signOut(); }catch(_){ }
         clearWorkspaceSelection();
+        localStorage.removeItem("javi_display_name");
+        state.displayName = "";
+        toast("Account deleted.");
         location.hash = "#dashboard";
         render();
       }catch(e){
         toast(e?.message || String(e));
       }finally{
         deleteBtn.disabled = false;
-        deleteBtn.textContent = "Delete workspace";
+        deleteBtn.textContent = "Delete account";
       }
-    }},["Delete workspace"]);
+    }},["Delete account"]);
     danger.appendChild(deleteBtn);
     inviteBox.appendChild(danger);
   } else {
