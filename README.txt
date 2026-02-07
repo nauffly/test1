@@ -64,8 +64,6 @@ Workspace troubleshooting (no JS changes)
   - `javi_list_workspace_members(p_workspace_id uuid)`
 - After running SQL, reload PostgREST cache by running:
   `notify pgrst, 'reload schema';`
-- If errors persist after SQL changes, clear old service worker cache in browser DevTools (Application → Service Workers → Unregister) and hard refresh.
-- Service worker is temporarily disabled/self-unregistering to prevent stale-client behavior; hard refresh once after deploy.
 - Then refresh the app and test:
   - Delete workspace as owner
   - Save name as a user and confirm other members see the change
