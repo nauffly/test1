@@ -714,35 +714,41 @@ async function ensureServiceWorker(){
 /** ---------- Supabase data helpers ---------- **/
 async function sbGetAll(table, orderBy=null){
   let q = supabase.from(table).select("*");
-  if(TENANT_TABLES.has(table)){
-    q = applyWorkspaceScope(q, false);
-  }
   if(orderBy) q = q.order(orderBy, {ascending:true});
   const {data, error} = await q;
   if(error) throw error;
   return data || [];
 }
 async function sbGetById(table, id){
+  // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).select("*").eq("id", id);
   if(TENANT_TABLES.has(table)){
-    q = applyWorkspaceScope(q, false);
+    if(!state.workspaceId) throw new Error("No workspace selected.");
+    // After migration we should NOT have NULL workspace_id rows; keep strict scoping.
+    q = q.eq("workspace_id", state.workspaceId);
   }
   const {data, error} = await q.maybeSingle();
   if(error) throw error;
   return data || null;
 }
 async function sbInsert(table, row){
-  const payload = (TENANT_TABLES.has(table) && !row.workspace_id)
-    ? { ...row, workspace_id: state.workspaceId }
-    : row;
-  const {data, error} = await supabase.from(table).insert(payload).select("*").single();
+  // Auto-attach workspace_id for tenant tables.
+  if(TENANT_TABLES.has(table)){
+    if(!state.workspaceId) throw new Error("No workspace selected.");
+    if(row && typeof row === "object" && !Array.isArray(row)){
+      if(row.workspace_id == null) row = {...row, workspace_id: state.workspaceId};
+    }
+  }
+  const {data, error} = await supabase.from(table).insert(row).select("*").single();
   if(error) throw error;
   return data;
 }
 async function sbUpdate(table, id, patch){
+  // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).update(patch).eq("id", id);
   if(TENANT_TABLES.has(table)){
-    q = applyWorkspaceScope(q, false);
+    if(!state.workspaceId) throw new Error("No workspace selected.");
+    q = q.eq("workspace_id", state.workspaceId);
   }
   const {data, error} = await q.select("*").single();
   if(error) throw error;
