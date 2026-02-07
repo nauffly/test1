@@ -636,6 +636,7 @@ const state = {
   theme: localStorage.getItem("javi_theme") || "dark",
   user: null,
   displayName: localStorage.getItem("javi_display_name") || "",
+  workspaceMode: "auto", // "multi" when workspace tables are available, otherwise "legacy"
 
   // Multi-tenant workspace context (Option B)
   workspaceId: localStorage.getItem("javi_workspace_id") || null,
@@ -728,7 +729,7 @@ async function ensureServiceWorker(){
 /** ---------- Supabase data helpers ---------- **/
 async function sbGetAll(table, orderBy=null){
   let q = supabase.from(table).select("*");
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     q = applyWorkspaceScope(q, false);
   }
   if(orderBy) q = q.order(orderBy, {ascending:true});
@@ -739,7 +740,7 @@ async function sbGetAll(table, orderBy=null){
 async function sbGetById(table, id){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).select("*").eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     // After migration we should NOT have NULL workspace_id rows; keep strict scoping.
     q = q.eq("workspace_id", state.workspaceId);
@@ -750,7 +751,7 @@ async function sbGetById(table, id){
 }
 async function sbInsert(table, row){
   // Auto-attach workspace_id for tenant tables.
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     if(row && typeof row === "object" && !Array.isArray(row)){
       if(row.workspace_id == null) row = {...row, workspace_id: state.workspaceId};
@@ -763,7 +764,7 @@ async function sbInsert(table, row){
 async function sbUpdate(table, id, patch){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).update(patch).eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.eq("workspace_id", state.workspaceId);
   }
@@ -774,7 +775,7 @@ async function sbUpdate(table, id, patch){
 async function sbDelete(table, id){
   // Keep tenant isolation while still supporting legacy rows with NULL workspace_id.
   let q = supabase.from(table).delete().eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
@@ -783,7 +784,7 @@ async function sbDelete(table, id){
 
   // Some legacy rows may have NULL/missing workspace_id after migration.
   // If scoped delete removed nothing, retry by id only.
-  if(TENANT_TABLES.has(table) && (data || []).length === 0){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy" && (data || []).length === 0){
     const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
     if(retryErr) throw retryErr;
   }
@@ -878,11 +879,23 @@ async function renameCurrentWorkspace(newName) {
 const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
 
 function applyWorkspaceScope(q, includeLegacyNull=false){
+  if(state.workspaceMode === "legacy") return q;
   if(!state.workspaceId) throw new Error("No workspace selected.");
   if(includeLegacyNull){
     return q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
   return q.eq("workspace_id", state.workspaceId);
+}
+
+function syncWorkspaceNavigation(){
+  const legacy = state.workspaceMode === "legacy";
+  document.querySelectorAll('#nav a[data-route="workspace"]').forEach(a=>{
+    a.style.display = legacy ? "none" : "";
+  });
+  const menuWorkspaceBtn = document.querySelector("#menuWorkspaceBtn");
+  if(menuWorkspaceBtn){
+    menuWorkspaceBtn.style.display = legacy ? "none" : "";
+  }
 }
 
 function persistWorkspaceToLocalStorage(){
@@ -952,21 +965,45 @@ async function sbRpc(fn, args){
   return data;
 }
 
-async function fetchMyWorkspaces(){
-  // Requires: workspace_members has FK to workspaces as "workspaces"
-  const {data, error} = await supabase
-    .from("workspace_members")
-    .select("workspace_id, role, workspaces(name)")
-    .eq("user_id", state.user.id);
-  if(error) throw error;
+function isMissingWorkspaceSchemaError(err){
+  const code = String(err?.code || "").toUpperCase();
+  const msg = String(err?.message || err || "").toLowerCase();
+  if(code === "42P01" || code === "42703") return true; // undefined table / column
+  return (
+    msg.includes('workspace_members') && (msg.includes('does not exist') || msg.includes('could not find'))
+  ) || (
+    msg.includes('workspaces') && (msg.includes('does not exist') || msg.includes('could not find'))
+  );
+}
 
-  const list = (data || []).map(r=>({
+async function fetchMyWorkspaces(){
+  const {data: memberships, error: membersErr} = await supabase
+    .from("workspace_members")
+    .select("workspace_id, role")
+    .eq("user_id", state.user.id);
+  if(membersErr) throw membersErr;
+
+  const rows = memberships || [];
+  const ids = rows.map(r=>r.workspace_id).filter(Boolean);
+  const namesById = {};
+
+  if(ids.length){
+    const {data: wsRows, error: wsErr} = await supabase
+      .from("workspaces")
+      .select("id,name")
+      .in("id", ids);
+    if(wsErr && !isMissingColumnErr(wsErr)) throw wsErr;
+    for(const w of (wsRows || [])){
+      namesById[w.id] = w.name;
+    }
+  }
+
+  const list = rows.map(r=>({
     id: r.workspace_id,
     role: r.role,
-    name: r.workspaces?.name || "Workspace"
+    name: namesById[r.workspace_id] || "Workspace"
   }));
 
-  // stable ordering
   list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   return list;
 }
@@ -1004,16 +1041,26 @@ async function ensureWorkspaceSelected(view){
   let workspaces = [];
   try{
     workspaces = await fetchMyWorkspaces();
+    state.workspaceMode = "multi";
   }catch(e){
-    // If the migration hasn't been run yet, show a helpful message.
+    if(isMissingWorkspaceSchemaError(e)){
+      // Legacy fallback only when workspace tables/columns are truly unavailable.
+      state.workspaceMode = "legacy";
+      state.workspaceId = "legacy";
+      state.workspaceName = "Default Workspace";
+      state.workspaceRole = "owner";
+      return true;
+    }
+
+    state.workspaceMode = "multi";
     view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Workspace setup required"]),
+      el("h2",{},["Workspace unavailable"]),
       el("div",{class:"muted", style:"margin-top:6px"},[
-        "Your database is not set up for multi-user workspaces yet."
+        "Could not load your workspaces right now."
       ]),
       el("hr",{class:"sep"}),
       el("div",{class:"small"},[
-        "Run the workspace SQL migration first, then refresh this page."
+        e?.message || String(e)
       ])
     ]));
     return false;
@@ -1255,6 +1302,11 @@ async function leaveCurrentWorkspace(){
 }
 
 async function renderWorkspace(view){
+  if(state.workspaceMode === "legacy"){
+    location.hash = "#dashboard";
+    return;
+  }
+
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
       el("h1",{},["Workspace"]),
@@ -1752,10 +1804,18 @@ async function renderOnce(){
   if(await tryAcceptInviteIfPresent()) { await render(); return; }
 
   // workspace gate (multi-tenant)
-  if(!(await ensureWorkspaceSelected(view))) return;
+  const workspaceReady = await ensureWorkspaceSelected(view);
+  // Always sync nav visibility after workspace mode is determined,
+  // even when setup is blocked by an error card/create-workspace flow.
+  syncWorkspaceNavigation();
+  if(!workspaceReady) return;
 
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
+  if(state.workspaceMode === "legacy" && state.route === "workspace"){
+    state.route = "dashboard";
+    if(location.hash !== "#dashboard") location.hash = "#dashboard";
+  }
   document.querySelectorAll("#nav a").forEach(a=>{
     a.classList.toggle("active", a.dataset.route===state.route);
   });
