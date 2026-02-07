@@ -714,6 +714,9 @@ async function ensureServiceWorker(){
 /** ---------- Supabase data helpers ---------- **/
 async function sbGetAll(table, orderBy=null){
   let q = supabase.from(table).select("*");
+  if(TENANT_TABLES.has(table)){
+    q = applyWorkspaceScope(q, false);
+  }
   if(orderBy) q = q.order(orderBy, {ascending:true});
   const {data, error} = await q;
   if(error) throw error;
@@ -1161,6 +1164,40 @@ function canManageWorkspace(){
   return String(state.workspaceRole || "").toLowerCase() === "owner";
 }
 
+
+async function leaveCurrentWorkspace(){
+  if(!state.workspaceId || !state.user?.id) throw new Error("No workspace selected.");
+  if(canManageWorkspace()) throw new Error("Workspace owner cannot leave. Transfer ownership or delete the workspace.");
+
+  const rpcTries = [
+    ["javi_leave_workspace", { workspace_id: state.workspaceId }],
+    ["javi_leave_workspace", { p_workspace_id: state.workspaceId }],
+    ["javi_leave_workspace", { wid: state.workspaceId }]
+  ];
+  for(const [fn,args] of rpcTries){
+    try{ await sbRpc(fn, args); return; }catch(_){ }
+  }
+
+  const {data, error} = await supabase
+    .from("workspace_members")
+    .delete()
+    .eq("workspace_id", state.workspaceId)
+    .eq("user_id", state.user.id)
+    .select("workspace_id");
+  if(error) throw error;
+  if(Array.isArray(data) && data.length>0) return;
+
+  // If DELETE returns no rows, confirm membership is gone.
+  const {data: stillMember, error: chkErr} = await supabase
+    .from("workspace_members")
+    .select("workspace_id")
+    .eq("workspace_id", state.workspaceId)
+    .eq("user_id", state.user.id)
+    .maybeSingle();
+  if(chkErr) throw chkErr;
+  if(stillMember) throw new Error("Could not leave workspace (membership still present).");
+}
+
 async function renderWorkspace(view){
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
@@ -1302,6 +1339,34 @@ async function renderWorkspace(view){
     inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:10px"},[
       "Only the workspace owner can create invite links."
     ]));
+
+    const leaveCard = el("div",{style:"margin-top:14px"},[
+      el("hr",{class:"sep"}),
+      el("div",{style:"font-weight:800; color:var(--danger)"},["Leave workspace"]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        "Leave this workspace and remove your membership. This does not delete workspace data."
+      ])
+    ]);
+    const leaveBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick: async ()=>{
+      if(!state.workspaceId) return;
+      if(!confirm(`Leave workspace "${state.workspaceName || "Workspace"}"?`)) return;
+      try{
+        leaveBtn.disabled = true;
+        leaveBtn.textContent = "Leaving…";
+        await leaveCurrentWorkspace();
+        toast("You left the workspace.");
+        clearWorkspaceSelection();
+        location.hash = "#dashboard";
+        render();
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        leaveBtn.disabled = false;
+        leaveBtn.textContent = "Leave workspace";
+      }
+    }},["Leave workspace"]);
+    leaveCard.appendChild(leaveBtn);
+    inviteBox.appendChild(leaveCard);
   }
 
   view.appendChild(card);
