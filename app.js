@@ -681,13 +681,20 @@ async function sbUpdate(table, id, patch){
   return data;
 }
 async function sbDelete(table, id){
-  let q = supabase.from(table).delete().eq("id", id);
-  if(TENANT_TABLES.has(table)){
-    if(!state.workspaceId) throw new Error("No workspace selected.");
+  // Ask for deleted rows so we can detect no-op deletes and safely retry when needed.
+  let q = supabase.from(table).delete().eq("id", id).select("id");
+  if(TENANT_TABLES.has(table) && state.workspaceId){
     q = q.eq("workspace_id", state.workspaceId);
   }
-  const {error} = await q;
+  const {data, error} = await q;
   if(error) throw error;
+
+  // Some legacy rows may have NULL/missing workspace_id after migration.
+  // If scoped delete removed nothing, retry by id only.
+  if(TENANT_TABLES.has(table) && (data || []).length === 0){
+    const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
+    if(retryErr) throw retryErr;
+  }
 }
 
 // --- Audit / attribution helpers (best-effort; falls back if columns don't exist) ---
@@ -955,8 +962,9 @@ async function fetchWorkspaceMembers(workspaceId){
 }
 
 async function createInviteLink(workspaceId, role="member"){
-  // Returns a full URL with #invite=<token>
+  // Returns a full URL with #invite=<token> (or RPC-provided invite URL)
   let token = null;
+  let directLink = null;
 
   // Try multiple RPC signatures so your SQL can vary slightly.
   const tries = [
@@ -969,12 +977,27 @@ async function createInviteLink(workspaceId, role="member"){
   for(const [fn, args] of tries){
     try{
       const out = await sbRpc(fn, args);
-      token = (typeof out === "string") ? out : (out?.token || out?.invite_token || out?.id || out?.value);
+      const payload = Array.isArray(out) ? out[0] : out;
+
+      if(typeof payload === "string"){
+        if(/^https?:\/\//i.test(payload)){
+          directLink = payload;
+          break;
+        }
+        token = payload;
+      }else if(payload && typeof payload === "object"){
+        directLink = payload.invite_url || payload.invite_link || payload.url || payload.link || null;
+        token = payload.token || payload.invite_token || payload.id || payload.value || payload.code || null;
+        if(directLink || token) break;
+      }
+
       if(token) break;
     }catch(e){
       lastErr = e;
     }
   }
+
+  if(directLink) return directLink;
 
   if(!token){
     if(lastErr) throw lastErr;
