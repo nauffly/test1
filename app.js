@@ -1,4 +1,5 @@
 var supabase;
+// JAVI_BUILD: 2026-02-06-dashboard-gcal-views
 /**
  * Javi (Online-first) — Supabase-backed static app
  * - Requires you to fill config.js with SUPABASE_URL + SUPABASE_ANON_KEY
@@ -222,6 +223,302 @@ function fmt(dt){
   const d = (dt instanceof Date) ? dt : new Date(dt);
   return new Intl.DateTimeFormat(undefined, {dateStyle:"medium", timeStyle:"short"}).format(d);
 }
+
+/* ===== Dashboard Calendar (Day / Week / Month) ===== */
+const CAL_LS_VIEW_KEY = "javi_dash_cal_view";
+const CAL_LS_COLOR_KEY = "javi_event_colors_v1";
+
+function calGetView(){
+  return localStorage.getItem(CAL_LS_VIEW_KEY) || "month";
+}
+function calSetView(v){
+  localStorage.setItem(CAL_LS_VIEW_KEY, v);
+}
+function calLoadColorMap(){
+  try{ return JSON.parse(localStorage.getItem(CAL_LS_COLOR_KEY) || "{}") || {}; }
+  catch(e){ return {}; }
+}
+function calSaveColorMap(m){
+  localStorage.setItem(CAL_LS_COLOR_KEY, JSON.stringify(m||{}));
+}
+function calGetEventColor(e){
+  if(e && e.color) return e.color;
+  const m = calLoadColorMap();
+  return m[String(e.id)] || "#2563eb"; // default blue-ish
+}
+async function calSetEventColor(eventId, color){
+  const m = calLoadColorMap();
+  m[String(eventId)] = color;
+  calSaveColorMap(m);
+  // Try to persist to Supabase if the column exists; if it doesn't, silently fall back to local storage.
+  try{ await sbUpdate("events", eventId, {color}); }catch(_e){}
+}
+function calDayKey(d){
+  const x = (d instanceof Date) ? d : new Date(d);
+  const y=x.getFullYear(), m=x.getMonth()+1, dd=x.getDate();
+  return `${y}-${String(m).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
+}
+function calStartOfDay(d){
+  const x = new Date(d); x.setHours(0,0,0,0); return x;
+}
+function calEndOfDay(d){
+  const x = new Date(d); x.setHours(23,59,59,999); return x;
+}
+function calStartOfWeek(d){
+  const x = calStartOfDay(d);
+  const day = x.getDay(); // 0=Sun
+  x.setDate(x.getDate() - day);
+  return x;
+}
+function calAddDays(d, n){
+  const x = new Date(d); x.setDate(x.getDate()+n); return x;
+}
+function calSameDay(a,b){
+  return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+}
+function calFmtShort(d){
+  return new Intl.DateTimeFormat(undefined,{month:"short", day:"numeric"}).format(d);
+}
+function calFmtTime(d){
+  return new Intl.DateTimeFormat(undefined,{hour:"numeric", minute:"2-digit"}).format(d);
+}
+function calFmtMonthTitle(d){
+  return new Intl.DateTimeFormat(undefined,{month:"long", year:"numeric"}).format(d);
+}
+function calEventsInRange(events, start, end){
+  const s=+start, e=+end;
+  return (events||[]).filter(ev=>{
+    const a=+new Date(ev.start_at), b=+new Date(ev.end_at);
+    return b>=s && a<=e && ev.status!=="CANCELED";
+  }).sort((x,y)=>new Date(x.start_at)-new Date(y.start_at));
+}
+
+function renderDashboardCalendarCard(events){
+  const now = new Date();
+  let anchor = new Date(now);
+  let viewMode = calGetView(); // "day" | "week" | "month"
+
+  const card = el("div",{class:"card", style:"margin-top:12px"});
+  const header = el("div",{class:"gcalToolbar"},[]);
+  const left = el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[]);
+  const right = el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[]);
+  const title = el("div",{class:"gcalTitle"},["Calendar"]);
+  const period = el("div",{class:"gcalPeriod"},[""]);
+  const btnPrev = el("button",{class:"btn secondary", onClick:()=>{ shift(-1); }},["◀"]);
+  const btnNext = el("button",{class:"btn secondary", onClick:()=>{ shift(1); }},["▶"]);
+  const btnToday = el("button",{class:"btn secondary", onClick:()=>{ anchor=new Date(); repaint(); }},["Today"]);
+
+  // segmented view toggle
+  const seg = el("div",{class:"seg"},[
+    el("button",{class:`segBtn ${viewMode==="day"?"active":""}`, onClick:()=>{viewMode="day"; calSetView("day"); repaint();}},["Day"]),
+    el("button",{class:`segBtn ${viewMode==="week"?"active":""}`, onClick:()=>{viewMode="week"; calSetView("week"); repaint();}},["Week"]),
+    el("button",{class:`segBtn ${viewMode==="month"?"active":""}`, onClick:()=>{viewMode="month"; calSetView("month"); repaint();}},["Month"])
+  ]);
+
+  left.appendChild(title);
+  left.appendChild(btnPrev);
+  left.appendChild(btnToday);
+  left.appendChild(btnNext);
+  left.appendChild(period);
+
+  right.appendChild(seg);
+
+  header.appendChild(left);
+  header.appendChild(right);
+
+  const body = el("div",{class:"gcalBody"},[]);
+  card.appendChild(header);
+  card.appendChild(body);
+
+  function shift(dir){
+    if(viewMode==="day"){
+      anchor = calAddDays(anchor, dir);
+    } else if(viewMode==="week"){
+      anchor = calAddDays(anchor, dir*7);
+    } else {
+      const x = new Date(anchor);
+      x.setDate(1);
+      x.setMonth(x.getMonth()+dir);
+      anchor = x;
+    }
+    repaint();
+  }
+
+  function openEventModal(ev){
+    const color = calGetEventColor(ev);
+    const box = el("div",{},[
+      el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start"},[
+        el("div",{class:"stack"},[
+          el("div",{style:"font-weight:800; font-size:16px"},[ev.title]),
+          el("div",{class:"kv"},[`${fmt(ev.start_at)} → ${fmt(ev.end_at)}`]),
+          el("div",{class:"kv"},[ev.location || "No location"])
+        ]),
+        el("span",{class:"badge"},[ev.status||"DRAFT"])
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+        el("div",{class:"stack"},[
+          el("div",{style:"font-weight:700"},["Event color"]),
+          el("div",{class:"muted small"},["Shows on the calendar."])
+        ]),
+        el("input",{type:"color", value:color, onInput:async (e)=>{
+          await calSetEventColor(ev.id, e.target.value);
+          repaint();
+        }})
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"row", style:"justify-content:flex-end"},[
+        el("a",{href:`#events/${ev.id}`, class:"btn"},["Open event"])
+      ])
+    ]);
+    modal(box);
+  }
+
+  function paintDayAgenda(day){
+    body.innerHTML="";
+    const d0 = calStartOfDay(day);
+    const d1 = calEndOfDay(day);
+    period.textContent = calFmtShort(d0);
+
+    const list = calEventsInRange(events, d0, d1);
+    body.appendChild(el("div",{class:"gcalAgenda"},[
+      el("div",{class:"gcalAgendaHeader"},[
+        el("div",{style:"font-weight:800"},["Day view"]),
+        el("div",{class:"muted small"},[new Intl.DateTimeFormat(undefined,{weekday:"long", month:"long", day:"numeric", year:"numeric"}).format(d0)])
+      ])
+    ]));
+
+    if(!list.length){
+      body.appendChild(el("div",{class:"muted"},["No events this day."]));
+      return;
+    }
+
+    for(const ev of list){
+      const c = calGetEventColor(ev);
+      const a = new Date(ev.start_at), b = new Date(ev.end_at);
+      const time = `${calFmtTime(a)} – ${calFmtTime(b)}`;
+      body.appendChild(el("div",{class:"gcalAgendaItem", onClick:()=>openEventModal(ev)},[
+        el("div",{class:"gcalDot", style:`background:${c}`}),
+        el("div",{class:"stack", style:"min-width:0"},[
+          el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[ev.title]),
+          el("div",{class:"kv"},[time]),
+          el("div",{class:"kv"},[ev.location || "No location"])
+        ])
+      ]));
+    }
+  }
+
+  function paintWeek(){
+    body.innerHTML="";
+    const ws = calStartOfWeek(anchor);
+    const we = calAddDays(ws, 6);
+    period.textContent = `${calFmtShort(ws)} – ${calFmtShort(we)}`;
+
+    const wrap = el("div",{class:"gcalWeekWrap"},[]);
+    const headerRow = el("div",{class:"gcalWeekHeader"},[]);
+    const grid = el("div",{class:"gcalWeekGrid"},[]);
+
+    const dows = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    for(let i=0;i<7;i++){
+      const day = calAddDays(ws, i);
+      headerRow.appendChild(el("div",{class:"gcalWeekColHead"},[
+        el("div",{class:"small muted"},[dows[i]]),
+        el("div",{class:`gcalWeekDayNum ${calSameDay(day,new Date())?"today":""}`},[String(day.getDate())])
+      ]));
+
+      // events for that day
+      const dayStart = calStartOfDay(day);
+      const dayEnd = calEndOfDay(day);
+      const list = calEventsInRange(events, dayStart, dayEnd);
+
+      const col = el("div",{class:"gcalWeekCol", onClick:()=>{ anchor=day; viewMode="day"; calSetView("day"); repaint(); }},[]);
+      for(const ev of list.slice(0,6)){
+        const c = calGetEventColor(ev);
+        col.appendChild(el("div",{class:"gcalChip", style:`border-left-color:${c}`, onClick:(e)=>{e.stopPropagation(); openEventModal(ev);} },[
+          el("div",{class:"gcalChipTitle"},[ev.title])
+        ]));
+      }
+      if(list.length>6){
+        col.appendChild(el("div",{class:"gcalMore"},[`+${list.length-6} more`]));
+      }
+      grid.appendChild(col);
+    }
+
+    wrap.appendChild(headerRow);
+    wrap.appendChild(grid);
+    body.appendChild(wrap);
+  }
+
+  function paintMonth(){
+    body.innerHTML="";
+    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const last = new Date(anchor.getFullYear(), anchor.getMonth()+1, 0);
+    period.textContent = calFmtMonthTitle(first);
+
+    // grid start at sunday before first
+    const gridStart = calStartOfWeek(first);
+    const days = [];
+    for(let i=0;i<42;i++) days.push(calAddDays(gridStart, i));
+
+    const wrap = el("div",{class:"gcalMonthWrap"},[]);
+    const dow = el("div",{class:"gcalMonthDow"},[]);
+    ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(x=>dow.appendChild(el("div",{class:"gcalDowCell"},[x])));
+    const grid = el("div",{class:"gcalMonthGrid"},[]);
+
+    for(const day of days){
+      const dayStart = calStartOfDay(day);
+      const dayEnd = calEndOfDay(day);
+      const list = calEventsInRange(events, dayStart, dayEnd);
+
+      const isOther = day.getMonth()!==first.getMonth();
+      const cell = el("div",{class:`gcalDayCell ${isOther?"other":""} ${calSameDay(day,new Date())?"today":""}`, onClick:()=>{
+        anchor=day; viewMode="day"; calSetView("day"); repaint();
+      }},[
+        el("div",{class:"gcalDayTop"},[
+          el("div",{class:"gcalDayNum"},[String(day.getDate())]),
+          list.length? el("div",{class:"gcalDayDots"}, list.slice(0,4).map(ev=>{
+            const c = calGetEventColor(ev);
+            return el("span",{class:"gcalDotSm", style:`background:${c}`});
+          })) : el("span",{})
+        ])
+      ]);
+
+      // desktop: show chips
+      const chips = el("div",{class:"gcalMonthChips"},[]);
+      for(const ev of list.slice(0,2)){
+        const c = calGetEventColor(ev);
+        chips.appendChild(el("div",{class:"gcalChip month", style:`background:${c}`, onClick:(e)=>{e.stopPropagation(); openEventModal(ev);} },[
+          el("span",{class:"gcalChipTitle"},[ev.title])
+        ]));
+      }
+      if(list.length>2){
+        chips.appendChild(el("div",{class:"gcalMore"},[`+${list.length-2} more`]));
+      }
+      cell.appendChild(chips);
+      grid.appendChild(cell);
+    }
+
+    wrap.appendChild(dow);
+    wrap.appendChild(grid);
+    body.appendChild(wrap);
+  }
+
+  function repaint(){
+    // refresh segmented active styles
+    seg.querySelectorAll(".segBtn").forEach(btn=>btn.classList.remove("active"));
+    if(viewMode==="day") seg.children[0].classList.add("active");
+    if(viewMode==="week") seg.children[1].classList.add("active");
+    if(viewMode==="month") seg.children[2].classList.add("active");
+
+    if(viewMode==="day") paintDayAgenda(anchor);
+    else if(viewMode==="week") paintWeek();
+    else paintMonth();
+  }
+
+  repaint();
+  return card;
+}
+
 function overlaps(aStart,aEnd,bStart,bEnd){
   return (aStart < bEnd) && (aEnd > bStart);
 }
@@ -240,6 +537,7 @@ const state = {
   route: "dashboard",
   theme: localStorage.getItem("javi_theme") || "dark",
   user: null,
+  eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
 };
 
 function setTheme(theme){
@@ -371,7 +669,7 @@ function renderAuth(view){
   const card = el("div",{class:"card", style:"max-width:520px; margin:24px auto"});
   card.appendChild(el("h1",{},["Sign in to Javi"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
-    "Online-first team workspace (shared)."
+    "Create events. Organize, schedule and track production gear."
   ]));
   card.appendChild(el("hr",{class:"sep"}));
 
@@ -469,21 +767,33 @@ async function render() {
 }
 
 async function renderDashboard(view){
-  const [events, checkouts] = await Promise.all([
+  const [events, reservations, gear] = await Promise.all([
     sbGetAll("events"),
-    sbGetAll("checkouts")
+    sbGetAll("reservations"),
+    sbGetAll("gear_items")
   ]);
   const now=new Date();
+  const gearById = Object.fromEntries((gear||[]).map(g=>[g.id,g]));
 
-  const upcoming = events
+  const upcomingAll = events
     .filter(e=>new Date(e.end_at)>=now && e.status!=="CANCELED")
-    .sort((a,b)=>new Date(a.start_at)-new Date(b.start_at))
-    .slice(0,8);
+    .sort((a,b)=>new Date(a.start_at)-new Date(b.start_at));
 
-  const open = checkouts
-    .filter(c=>c.status==="OPEN")
-    .sort((a,b)=>new Date(a.due_at)-new Date(b.due_at))
+  // "Checked out now" is derived from ONGOING events (start_at <= now <= end_at)
+  const ongoingEvents = events
+    .filter(e=>new Date(e.start_at)<=now && new Date(e.end_at)>=now && e.status!=="CANCELED")
+    .sort((a,b)=>new Date(a.end_at)-new Date(b.end_at))
     .slice(0,10);
+
+  const activeResvByEvent = new Map();
+  let totalActiveOut = 0;
+  for(const e of ongoingEvents){
+    const rs = (reservations||[]).filter(r=>r.event_id===e.id && String(r.status||"").toUpperCase()==="ACTIVE");
+    if(rs.length){
+      activeResvByEvent.set(e.id, rs);
+      totalActiveOut += rs.length;
+    }
+  }
 
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
@@ -501,58 +811,154 @@ async function renderDashboard(view){
   const c1=el("div",{class:"card"});
   c1.appendChild(el("div",{class:"row", style:"justify-content:space-between"},[
     el("h2",{},["Upcoming events"]),
-    el("span",{class:"badge"},[String(upcoming.length)])
+    el("span",{class:"badge"},[String(upcomingAll.length)])
   ]));
   c1.appendChild(el("hr",{class:"sep"}));
-  if(!upcoming.length){
+  if(!upcomingAll.length){
     c1.appendChild(el("div",{class:"muted"},["No upcoming events."]));
   } else {
-    for(const e of upcoming){
-      c1.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
-        el("div",{class:"stack"},[
-          el("div",{style:"font-weight:700"},[e.title]),
-          el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
-          el("div",{class:"kv"},[e.location || "No location"])
-        ]),
-        el("span",{class:"badge"},[e.status||"DRAFT"])
-      ]));
+    const PAGE=3;
+    const pages=[];
+    for(let i=0;i<upcomingAll.length;i+=PAGE) pages.push(upcomingAll.slice(i,i+PAGE));
+
+    const row=el("div",{class:"dashSnapRow"});
+    const dots=el("div",{class:"dashSnapDots"});
+    const dotBtns=[];
+    const pageEls=[];
+
+    function setActive(i){
+      for(let k=0;k<dotBtns.length;k++){
+        dotBtns[k].classList.toggle("active", k===i);
+        dotBtns[k].setAttribute("aria-current", k===i ? "true" : "false");
+      }
     }
+
+    pages.forEach((pg,pi)=>{
+      const page=el("div",{class:"dashSnapPage"});
+      for(const e of pg){
+        page.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
+          el("div",{class:"stack"},[
+            el("div",{style:"font-weight:700"},[e.title]),
+            el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
+            el("div",{class:"kv"},[e.location || "No location"])
+          ]),
+          el("span",{class:"badge"},[e.status||"DRAFT"])
+        ]));
+      }
+      row.appendChild(page);
+      pageEls.push(page);
+
+      const dot=el("button",{
+        class:`dashSnapDot ${pi===0?"active":""}`,
+        type:"button",
+        title:`Page ${pi+1} of ${pages.length}`,
+        onClick:()=>page.scrollIntoView({behavior:"smooth", inline:"start", block:"nearest"})
+      },[""]);
+      dots.appendChild(dot);
+      dotBtns.push(dot);
+    });
+
+    let raf=0;
+    row.addEventListener("scroll", ()=>{
+      if(raf) cancelAnimationFrame(raf);
+      raf=requestAnimationFrame(()=>{
+        const w = row.clientWidth || 1;
+        const i = Math.max(0, Math.min(pageEls.length-1, Math.round(row.scrollLeft / w)));
+        setActive(i);
+      });
+    }, {passive:true});
+
+    c1.appendChild(row);
+    if(pages.length>1) c1.appendChild(dots);
   }
 
   const c2=el("div",{class:"card"});
   c2.appendChild(el("div",{class:"row", style:"justify-content:space-between"},[
     el("h2",{},["Checked out now"]),
-    el("span",{class:"badge"},[String(open.length)])
+    el("span",{class:"badge"},[String(totalActiveOut)])
   ]));
   c2.appendChild(el("hr",{class:"sep"}));
-  if(!open.length){
-    c2.appendChild(el("div",{class:"muted"},["Nothing checked out."]));
+
+  if(totalActiveOut===0){
+    c2.appendChild(el("div",{class:"muted"},["Nothing checked out (no ongoing events with active gear)."]));
   } else {
-    const gearById = Object.fromEntries((await sbGetAll("gear_items")).map(g=>[g.id,g]));
-    for(const c of open){
-      const items=(c.items||[]).map(id=>gearById[id]).filter(Boolean);
-      c2.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"stack"},[
-          el("div",{},[
-            el("span",{style:"font-weight:700"},[c.custody || "—"]),
-            el("span",{class:"muted"},[` • due ${fmt(c.due_at)}`]),
-          ]),
-          el("div",{class:"kv"},[c.event_title ? `Event: ${c.event_title}` : "Ad-hoc checkout"]),
-        ]),
-        el("div",{},[
-          el("button",{class:"btn secondary", onClick: async ()=>{
-            await sbUpdate("checkouts", c.id, { status:"RETURNED", returned_at: new Date().toISOString() });
-            toast("Marked returned.");
-            render();
-          }},["Return"])
-        ])
-      ]));
+    // Build list of ongoing events that actually have ACTIVE gear
+    const cards=[];
+    for(const e of ongoingEvents){
+      const rs = activeResvByEvent.get(e.id) || [];
+      if(!rs.length) continue;
+
+      const names = rs
+        .map(r=>gearById[r.gear_item_id])
+        .filter(Boolean)
+        .map(g=>`${g.category}: ${g.name}`);
+
+      const preview = names.slice(0,3).join(" • ");
+      const more = names.length>3 ? ` • +${names.length-3} more` : "";
+      cards.push({e, rs, preview: preview ? (preview + more) : `${rs.length} item(s)`});
     }
+
+    const PAGE=3;
+    const pages=[];
+    for(let i=0;i<cards.length;i+=PAGE) pages.push(cards.slice(i,i+PAGE));
+
+    const row=el("div",{class:"dashSnapRow"});
+    const dots=el("div",{class:"dashSnapDots"});
+    const dotBtns=[];
+    const pageEls=[];
+
+    function setActive(i){
+      for(let k=0;k<dotBtns.length;k++){
+        dotBtns[k].classList.toggle("active", k===i);
+        dotBtns[k].setAttribute("aria-current", k===i ? "true" : "false");
+      }
+    }
+
+    pages.forEach((pg,pi)=>{
+      const page=el("div",{class:"dashSnapPage"});
+      for(const c of pg){
+        const e=c.e, rs=c.rs;
+        page.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
+          el("div",{class:"stack"},[
+            el("div",{style:"font-weight:700"},[e.title]),
+            el("div",{class:"kv"},[`Ongoing • ends ${fmt(e.end_at)}`]),
+            el("div",{class:"kv"},[c.preview])
+          ]),
+          el("span",{class:"badge"},[`${rs.length} out`])
+        ]));
+      }
+      row.appendChild(page);
+      pageEls.push(page);
+
+      const dot=el("button",{
+        class:`dashSnapDot ${pi===0?"active":""}`,
+        type:"button",
+        title:`Page ${pi+1} of ${pages.length}`,
+        onClick:()=>page.scrollIntoView({behavior:"smooth", inline:"start", block:"nearest"})
+      },[""]);
+      dots.appendChild(dot);
+      dotBtns.push(dot);
+    });
+
+    let raf=0;
+    row.addEventListener("scroll", ()=>{
+      if(raf) cancelAnimationFrame(raf);
+      raf=requestAnimationFrame(()=>{
+        const w = row.clientWidth || 1;
+        const i = Math.max(0, Math.min(pageEls.length-1, Math.round(row.scrollLeft / w)));
+        setActive(i);
+      });
+    }, {passive:true});
+
+    c2.appendChild(row);
+    if(pages.length>1) c2.appendChild(dots);
   }
 
   grid.appendChild(c1);
   grid.appendChild(c2);
   view.appendChild(grid);
+  // Calendar (below Upcoming + Checked out)
+  view.appendChild(renderDashboardCalendarCard(events));
 }
 
 function modal(content){
@@ -862,16 +1268,55 @@ async function renderEvents(view){
     return renderEventDetail(view, evt);
   }
 
-  const events = (await sbGetAll("events")).sort((a,b)=> new Date(b.start_at)-new Date(a.start_at));
+  // ---- Tabs: Upcoming vs Past/Ended ----
+  const allEvents = await sbGetAll("events");
+  const now = new Date();
+
+  const upcomingEvents = allEvents
+    .filter(e => new Date(e.end_at) >= now && String(e.status||"").toUpperCase() !== "CLOSED")
+    .sort((a,b)=> new Date(a.start_at) - new Date(b.start_at));
+
+  const pastEvents = allEvents
+    .filter(e => new Date(e.end_at) < now || String(e.status||"").toUpperCase() === "CLOSED")
+    .sort((a,b)=> new Date(b.start_at) - new Date(a.start_at));
+
+  // Ensure state.eventsTab is valid
+  if(state.eventsTab !== "upcoming" && state.eventsTab !== "past"){
+    state.eventsTab = "upcoming";
+    localStorage.setItem("javi_events_tab", state.eventsTab);
+  }
+
+  const tabBtn = (key, label, count)=>{
+    const active = state.eventsTab === key;
+    return el("button",{
+      class: active ? "btn" : "btn secondary",
+      type:"button",
+      onClick:()=>{
+        state.eventsTab = key;
+        localStorage.setItem("javi_events_tab", state.eventsTab);
+        render();
+      }
+    },[`${label} (${count})`]);
+  };
+
+  view.appendChild(el("div",{class:"row", style:"gap:8px; margin-bottom:12px; flex-wrap:wrap"},[
+    tabBtn("upcoming","Upcoming", upcomingEvents.length),
+    tabBtn("past","Past / Ended", pastEvents.length),
+  ]));
+
   const list=el("div",{class:"grid"});
   view.appendChild(list);
 
-  if(!events.length){
-    list.appendChild(el("div",{class:"card"},["No events yet."]));
+  const eventsToShow = state.eventsTab === "past" ? pastEvents : upcomingEvents;
+
+  if(!eventsToShow.length){
+    list.appendChild(el("div",{class:"card"},[
+      state.eventsTab === "past" ? "No past events." : "No upcoming events."
+    ]));
     return;
   }
-  for(const e of events){
-    // count reserved via query? keep light: show status only
+
+  for(const e of eventsToShow){
     list.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
       el("div",{class:"stack"},[
         el("div",{style:"font-weight:700"},[e.title]),
@@ -975,10 +1420,10 @@ async function renderEventDetail(view, evt){
   const gear = await sbGetAll("gear_items");
   const kits = await sbGetAll("kits");
   const gearById = Object.fromEntries(gear.map(g=>[g.id,g]));
-  const reservations = (await sbGetAll("reservations")).filter(r=>r.event_id===evt.id && r.status==="ACTIVE");
+  const allReservations = (await sbGetAll("reservations")).filter(r=>r.event_id===evt.id);
+  const reservations = allReservations.filter(r=>String(r.status||"").toUpperCase()==="ACTIVE");
+  const returnedReservations = allReservations.filter(r=>String(r.status||"").toUpperCase()==="RETURNED");
   const existingReservedIds = new Set(reservations.map(r=>r.gear_item_id));
-  const checkouts = (await sbGetAll("checkouts")).filter(c=>c.event_id===evt.id).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-  const openCheckout = checkouts.find(c=>c.status==="OPEN") || null;
 
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
@@ -1080,6 +1525,28 @@ async function renderEventDetail(view, evt){
     }
 
     left.appendChild(listBox);
+  }
+
+
+  // Receipt (returned gear) — keep history visible after returning
+  if(returnedReservations.length){
+    left.appendChild(el("div",{style:"margin-top:14px"},[
+      el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+        el("div",{style:"font-weight:700"},["Receipt"]),
+        el("span",{class:"badge"},[String(returnedReservations.length)])
+      ]),
+      el("div",{class:"muted small", style:"margin-top:6px"},["Returned items for this event (read-only)."]),
+      el("div",{class:"grid", style:"margin-top:10px"}, returnedReservations.map(r=>{
+        const it = gearById[r.gear_item_id];
+        if(!it) return el("div",{class:"listItem"},[el("div",{class:"muted"},["(Missing gear item)"])]);
+        return el("div",{class:"listItem"},[
+          el("div",{class:"stack"},[
+            el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
+            el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`])
+          ])
+        ]);
+      }))
+    ]));
   }
 
   left.appendChild(el("hr",{class:"sep"}));
@@ -1301,79 +1768,58 @@ async function renderEventDetail(view, evt){
 
 
   const right=el("div",{class:"card"});
-  right.appendChild(el("h2",{},["Checkout"]));
-  right.appendChild(el("div",{class:"small muted", style:"margin-top:6px"},["Direct checkout. Checks out all currently reserved items."]));
+  right.appendChild(el("h2",{},["Checked out"]));
+  right.appendChild(el("div",{class:"small muted", style:"margin-top:6px"},[
+    "Automatic: reserved gear is considered checked out only while the event is ongoing."
+  ]));
   right.appendChild(el("hr",{class:"sep"}));
 
-  if(openCheckout){
+  const now = new Date();
+  const ongoing = (new Date(evt.start_at) <= now) && (new Date(evt.end_at) >= now) && evt.status!=="CANCELED";
+
+  if(!ongoing){
+    right.appendChild(el("div",{class:"muted"},["This event is not currently ongoing."]));
+    right.appendChild(el("div",{class:"small muted", style:"margin-top:8px"},[
+      "Upcoming reservations remain reserved (and will show as checked out automatically once the event starts)."
+    ]));
+  } else if(!reservations.length){
+    right.appendChild(el("div",{class:"muted"},["No reserved items are currently checked out for this event."]));
+  } else {
     right.appendChild(el("div",{class:"listItem"},[
       el("div",{class:"stack"},[
-        el("div",{},[
-          el("span",{style:"font-weight:700"},["OPEN"]),
-          el("span",{class:"muted"},[` • custody: ${openCheckout.custody || "—"}`])
-        ]),
-        el("div",{class:"kv"},[`Due ${fmt(openCheckout.due_at)} • ${(openCheckout.items||[]).length} items`])
+        el("div",{style:"font-weight:700"},[`${reservations.length} item(s) checked out now`]),
+        el("div",{class:"kv"},[`Ongoing • ends ${fmt(evt.end_at)}`])
       ]),
       el("button",{class:"btn secondary", onClick: async ()=>{
-        await sbUpdate("checkouts", openCheckout.id, { status:"RETURNED", returned_at: new Date().toISOString() });
-        await sbUpdate("events", evt.id, { status: reservations.length ? "RESERVED" : "DRAFT", updated_at: new Date().toISOString() });
-        toast("Marked returned.");
+        if(!confirm(`Return all ${reservations.length} item(s) from this event now?`)) return;
+
+        const nowIso = new Date().toISOString();
+
+        // Mark this event's ACTIVE reservations returned (so they are available again)
+        const {error: rErr} = await supabase
+          .from("reservations")
+          .update({ status:"RETURNED" })
+          .eq("event_id", evt.id)
+          .eq("status","ACTIVE");
+        if(rErr) throw rErr;
+
+        // Best-effort: close any legacy OPEN checkout rows tied to this event
+        try{
+          await supabase
+            .from("checkouts")
+            .update({ status:"RETURNED", returned_at: nowIso })
+            .eq("event_id", evt.id)
+            .eq("status","OPEN");
+        }catch(_){}
+
+        await sbUpdate("events", evt.id, { status:"CLOSED", end_at: nowIso, updated_at: nowIso });
+
+        toast("Returned. Gear is available again.");
         render();
-      }},["Mark returned"])
+      }},["Return all"])
     ]));
-  } else {
-    const custody=el("input",{class:"input", placeholder:"Custody (who has the gear) e.g., Brent"});
-    const due=el("input",{class:"input", type:"datetime-local", value: toInputDateTimeLocal(new Date(evt.end_at))});
-    const notes=el("input",{class:"input", placeholder:"Notes (optional)"});
 
-    right.appendChild(el("label",{class:"small muted"},["Custody"]));
-    right.appendChild(custody);
-    right.appendChild(el("label",{class:"small muted", style:"margin-top:8px"},["Due back"]));
-    right.appendChild(due);
-    right.appendChild(el("label",{class:"small muted", style:"margin-top:8px"},["Notes"]));
-    right.appendChild(notes);
-
-    right.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
-      el("button",{class:"btn", onClick: async ()=>{
-        if(!reservations.length){ toast("No reserved items to check out."); return; }
-        const items = reservations.map(r=>r.gear_item_id);
-        const row={
-          event_id: evt.id,
-          event_title: evt.title,
-          custody: custody.value.trim(),
-          due_at: new Date(due.value).toISOString(),
-          notes: notes.value.trim(),
-          status:"OPEN",
-          items
-        };
-        await sbInsert("checkouts", row);
-        await sbUpdate("events", evt.id, { status:"CHECKED_OUT", updated_at: new Date().toISOString() });
-        toast("Checked out reserved gear.");
-        render();
-      }},["Check out reserved gear"])
-    ]));
-  }
-
-  right.appendChild(el("hr",{class:"sep"}));
-  right.appendChild(el("div",{class:"small", style:"font-weight:700"},["Checkout history"]));
-  if(!checkouts.length){
-    right.appendChild(el("div",{class:"muted", style:"margin-top:8px"},["None."]));
-  } else {
-    const box=el("div",{class:"grid", style:"margin-top:8px"});
-    for(const c of checkouts.slice(0,8)){
-      box.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"stack"},[
-          el("div",{},[
-            el("span",{style:"font-weight:700"},[c.status]),
-            el("span",{class:"muted"},[` • custody ${c.custody || "—"}`])
-          ]),
-          el("div",{class:"kv"},[`${fmt(c.checked_out_at)} → ${c.returned_at ? fmt(c.returned_at) : "—"}`]),
-          el("div",{class:"kv"},[c.notes || ""])
-        ]),
-        el("div",{},[])
-      ]));
-    }
-    right.appendChild(box);
+        // (List removed) No duplicate gear display here.
   }
 
   grid.appendChild(left);
@@ -1551,6 +1997,3 @@ $("#logoutBtn").addEventListener("click", async ()=>{
   if(!location.hash) location.hash="#dashboard";
   render();
 })();
-
-// Calendar render restored
-view.appendChild(renderDashboardCalendarCard(events));
