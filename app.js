@@ -234,15 +234,15 @@ function setupHeaderUX(){
     document.body.appendChild(btn);
     document.body.appendChild(menu);
 
-    const themeBtn = document.querySelector("#themeBtn");
+    const settingsThemeBtn = document.querySelector("#settingsThemeBtn");
     const logoutBtn = document.querySelector("#logoutBtn");
-    if(!themeBtn) menu.querySelector("#menuThemeBtn").style.display="none";
+    if(!settingsThemeBtn) menu.querySelector("#menuThemeBtn").style.display="none";
     if(!logoutBtn) menu.querySelector("#menuLogoutBtn").style.display="none";
 
     const close = ()=> menu.classList.remove("open");
     btn.addEventListener("click",(e)=>{ e.preventDefault(); menu.classList.toggle("open"); });
 
-    menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); themeBtn?.click(); });
+    menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); settingsThemeBtn?.click(); });
 
     // Workspace shortcut
     menu.querySelector("#menuWorkspaceBtn")?.addEventListener("click",()=>{ close(); location.hash = "#workspace"; });
@@ -284,7 +284,7 @@ function setupHeaderUX(){
 
       @media (max-width: 900px){
         header{ padding-top: calc(env(safe-area-inset-top, 0px) + 20px) !important; }
-        #themeBtn, #logoutBtn{ display:none !important; }
+        #settingsWrap{ display:none !important; }
         #hamburgerBtn{ display:inline-flex !important; }
       }
     `;
@@ -725,7 +725,14 @@ async function fetchDisplayNamesForUserIds(userIds){
 function setTheme(theme){
   state.theme=theme;
   document.documentElement.setAttribute("data-theme", theme);
-  $("#themeBtn").textContent = theme === "dark" ? "Dark" : "Light";
+  const settingsThemeBtn = $("#settingsThemeBtn");
+  if(settingsThemeBtn){
+    settingsThemeBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  }
+  const menuThemeBtn = $("#menuThemeBtn");
+  if(menuThemeBtn){
+    menuThemeBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  }
   localStorage.setItem("javi_theme", theme);
 }
 
@@ -917,6 +924,10 @@ function syncWorkspaceNavigation(){
   const menuWorkspaceBtn = document.querySelector("#menuWorkspaceBtn");
   if(menuWorkspaceBtn){
     menuWorkspaceBtn.style.display = legacy ? "none" : "";
+  }
+  const settingsWorkspaceBtn = document.querySelector("#settingsWorkspaceBtn");
+  if(settingsWorkspaceBtn){
+    settingsWorkspaceBtn.style.display = legacy ? "none" : "";
   }
 }
 
@@ -1858,7 +1869,8 @@ async function renderOnce(){
 
   const cfg = requireConfig();
   if(!cfg){
-    $("#logoutBtn").style.display="none";
+    const settingsWrap = $("#settingsWrap");
+    if(settingsWrap) settingsWrap.style.display = "none";
     $("#nav").style.visibility="hidden";
     renderNeedsConfig(view);
     return;
@@ -1872,7 +1884,8 @@ async function renderOnce(){
   state.user = session?.user || null;
   state.displayName = pickDisplayName(state.user);
   if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
-  $("#logoutBtn").style.display = state.user ? "inline-flex" : "none";
+  const settingsWrap = $("#settingsWrap");
+  if(settingsWrap) settingsWrap.style.display = state.user ? "flex" : "none";
   $("#nav").style.visibility = state.user ? "visible" : "hidden";
 
   if(!state.user){
@@ -3223,7 +3236,29 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("hashchange", render);
 
-$("#themeBtn").addEventListener("click", ()=> setTheme(state.theme==="dark" ? "light" : "dark"));
+$("#settingsBtn")?.addEventListener("click", (e)=>{
+  e.preventDefault();
+  $("#settingsMenu")?.classList.toggle("open");
+});
+
+document.addEventListener("click", (e)=>{
+  const wrap = $("#settingsWrap");
+  const menu = $("#settingsMenu");
+  if(!wrap || !menu || !menu.classList.contains("open")) return;
+  if(wrap.contains(e.target)) return;
+  menu.classList.remove("open");
+});
+
+$("#settingsThemeBtn")?.addEventListener("click", ()=>{
+  setTheme(state.theme==="dark" ? "light" : "dark");
+  $("#settingsMenu")?.classList.remove("open");
+});
+
+$("#settingsWorkspaceBtn")?.addEventListener("click", ()=>{
+  location.hash = "#workspace";
+  $("#settingsMenu")?.classList.remove("open");
+});
+
 $("#logoutBtn").addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
@@ -3231,6 +3266,7 @@ $("#logoutBtn").addEventListener("click", async ()=>{
   localStorage.removeItem("javi_display_name");
   state.displayName = "";
   toast("Signed out.");
+  $("#settingsMenu")?.classList.remove("open");
   location.hash="#dashboard";
   render();
 });
