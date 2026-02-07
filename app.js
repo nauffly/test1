@@ -1012,6 +1012,15 @@ async function tryAcceptInviteIfPresent(){
   }
 }
 
+function pickMemberVisibleName(row){
+  const direct = [row?.display_name, row?.name, row?.full_name, row?.user_email, row?.email, row?.username, row?.handle];
+  for(const v of direct){
+    const nm = String(v || "").trim();
+    if(nm) return nm;
+  }
+  return "";
+}
+
 async function fetchWorkspaceMembers(workspaceId){
   let data = null;
   let error = null;
