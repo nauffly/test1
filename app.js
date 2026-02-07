@@ -932,6 +932,32 @@ async function fetchMyWorkspaces(){
   return list;
 }
 
+
+async function canCreateAnotherWorkspace(){
+  const workspaces = await fetchMyWorkspaces();
+  const owned = workspaces.filter(w=>String(w.role||"").toLowerCase()==="owner");
+  return owned.length < 1;
+}
+
+async function createWorkspaceByName(wsNameRaw){
+  const canCreate = await canCreateAnotherWorkspace();
+  if(!canCreate){
+    throw new Error("You can only create 1 workspace for now.");
+  }
+
+  const wsName = (wsNameRaw || "").trim() || "My Workspace";
+  const newId = await sbRpc("javi_bootstrap_workspace", { workspace_name: wsName });
+  const wss = await fetchMyWorkspaces();
+  const created = wss.find(w=>w.id===newId) || wss[0];
+  if(!created) throw new Error("Workspace was created but could not be loaded.");
+
+  state.workspaceId = created.id;
+  state.workspaceName = created.name;
+  state.workspaceRole = created.role;
+  persistWorkspaceToLocalStorage();
+  return created;
+}
+
 async function ensureWorkspaceSelected(view){
   // Returns true if workspace is ready; otherwise renders setup UI and returns false.
   if(!state.user) return false;
@@ -1208,7 +1234,22 @@ async function renderWorkspace(view){
     ]),
     el("div",{class:"row", style:"gap:8px; flex-wrap:wrap"},[
       el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Back"]),
-      el("button",{class:"btn secondary", onClick:()=>{ openWorkspaceSwitcher(); }},["Switch workspace"])
+      el("button",{class:"btn secondary", onClick:()=>{ openWorkspaceSwitcher(); }},["Switch workspace"]),
+      el("button",{class:"btn secondary", onClick: async ()=>{
+        try{
+          if(!(await canCreateAnotherWorkspace())){
+            toast("You can only create 1 workspace for now.");
+            return;
+          }
+          const nmRaw = prompt("Workspace name:");
+          if(nmRaw===null) return;
+          await createWorkspaceByName(nmRaw);
+          toast("Workspace created.");
+          render();
+        }catch(e){
+          toast(e?.message || String(e));
+        }
+      }},["Create workspace"])
     ])
   ]));
 
@@ -1417,7 +1458,9 @@ function renderCreateWorkspace(view){
   const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
   card.appendChild(el("h1",{},["Create your workspace"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
-    "This keeps your gear, events, and kits private to your team."
+    "This keeps your gear, events, and kits private to your team.",
+    el("br"),
+    "You can create 1 workspace per user for now."
   ]));
   card.appendChild(el("hr",{class:"sep"}));
 
@@ -1428,16 +1471,7 @@ function renderCreateWorkspace(view){
     el("button",{class:"btn", onClick: async ()=>{
       msg.textContent = "Creating workspace…";
       try{
-        const wsName = (name.value || "").trim() || "My Workspace";
-        // SECURITY DEFINER: creates workspace, adds you as owner, and claims any legacy rows with NULL workspace_id
-        const newId = await sbRpc("javi_bootstrap_workspace", { workspace_name: wsName });
-        // refresh memberships + set active
-        const wss = await fetchMyWorkspaces();
-        const created = wss.find(w=>w.id===newId) || wss[0];
-        state.workspaceId = created.id;
-        state.workspaceName = created.name;
-        state.workspaceRole = created.role;
-        persistWorkspaceToLocalStorage();
+        await createWorkspaceByName(name.value || "");
         msg.textContent = "Workspace created.";
         render();
       }catch(e){
