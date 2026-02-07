@@ -1,6 +1,6 @@
 
 var supabase;
-// JAVI_BUILD: 2026-02-07-workspace-stability-v2
+// JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
  * Javi (Online-first) — Supabase-backed static app
  * - Requires you to fill config.js with SUPABASE_URL + SUPABASE_ANON_KEY
@@ -101,7 +101,7 @@ function findGearByScan(gearItems, rawValue){
   }) || null;
 }
 
-function openQrScannerModal({ title="Scan QR", onDetect }){
+async function openQrScannerModal({ title="Scan QR", onDetect }){
   const hasBarcodeDetector = typeof window.BarcodeDetector !== "undefined";
   if(!hasBarcodeDetector || !navigator.mediaDevices?.getUserMedia){
     const fallback = prompt("QR scan not available on this device/browser. Paste scanned code:");
@@ -392,7 +392,7 @@ function calEventsInRange(events, start, end){
   }).sort((x,y)=>new Date(x.start_at)-new Date(y.start_at));
 }
 
-function renderDashboardCalendarCard(events){
+async function renderDashboardCalendarCard(events){
   const now = new Date();
   let anchor = new Date(now);
   let viewMode = calGetView(); // "day" | "week" | "month"
@@ -646,6 +646,27 @@ const state = {
 
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
 };
+
+
+/* ===== Workspace/RLS error helpers ===== */
+function _errMsg(e){ return (e && (e.message || e.error_description || e.details)) ? String(e.message || e.error_description || e.details) : String(e||""); }
+function isMissingTableErr(e){
+  const msg=_errMsg(e).toLowerCase();
+  return (e && e.code==="42P01") || msg.includes("relation") && msg.includes("does not exist");
+}
+function isMissingColumnErr(e){
+  const msg=_errMsg(e).toLowerCase();
+  return (e && e.code==="42703") || msg.includes("column") && msg.includes("does not exist");
+}
+function isSchemaCacheErr(e){
+  const msg=_errMsg(e).toLowerCase();
+  return msg.includes("schema cache") || msg.includes("could not find the function");
+}
+function isRlsDeniedErr(e){
+  const msg=_errMsg(e).toLowerCase();
+  // PostgREST commonly returns 401/403-ish messages; supabase-js surfaces as code or message
+  return msg.includes("row level security") || msg.includes("rls") || msg.includes("permission denied") || msg.includes("not allowed");
+}
 
 function pickDisplayName(user){
   const md = user?.user_metadata || {};
@@ -978,13 +999,45 @@ function isMissingWorkspaceSchemaError(err){
 }
 
 async function fetchMyWorkspaces(){
-  const {data: memberships, error: membersErr} = await supabase
+  // Returns [{id, role, name}]
+  // NOTE: this function will attempt a one-time self-heal if a user owns workspaces but has no membership rows.
+  const {data: memberships0, error: membersErr} = await supabase
     .from("workspace_members")
     .select("workspace_id, role")
     .eq("user_id", state.user.id);
+
   if(membersErr) throw membersErr;
 
-  const rows = memberships || [];
+  let rows = memberships0 || [];
+
+  // Self-heal: if user created workspaces but has no membership rows, insert owner memberships.
+  if(!rows.length){
+    const {data: owned, error: ownedErr} = await supabase
+      .from("workspaces")
+      .select("id")
+      .eq("created_by", state.user.id);
+
+    if(!ownedErr && owned && owned.length){
+      // Best effort inserts; ignore duplicate-key errors.
+      for(const w of owned){
+        await supabase.from("workspace_members").insert([{
+          workspace_id: w.id,
+          user_id: state.user.id,
+          role: "owner",
+          display_name: state.displayName || null
+        }]);
+      }
+
+      const {data: memberships1, error: membersErr2} = await supabase
+        .from("workspace_members")
+        .select("workspace_id, role")
+        .eq("user_id", state.user.id);
+
+      if(membersErr2) throw membersErr2;
+      rows = memberships1 || [];
+    }
+  }
+
   const ids = rows.map(r=>r.workspace_id).filter(Boolean);
   const namesById = {};
 
@@ -993,7 +1046,9 @@ async function fetchMyWorkspaces(){
       .from("workspaces")
       .select("id,name")
       .in("id", ids);
+
     if(wsErr && !isMissingColumnErr(wsErr)) throw wsErr;
+
     for(const w of (wsRows || [])){
       namesById[w.id] = w.name;
     }
@@ -1008,6 +1063,7 @@ async function fetchMyWorkspaces(){
   list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   return list;
 }
+
 
 
 async function canCreateAnotherWorkspace(){
@@ -1035,7 +1091,7 @@ async function createWorkspaceByName(wsNameRaw){
   return created;
 }
 
-async function ensureWorkspaceSelected(view){
+async async function ensureWorkspaceSelected(view){
   // Returns true if workspace is ready; otherwise renders setup UI and returns false.
   if(!state.user) return false;
 
@@ -1044,8 +1100,8 @@ async function ensureWorkspaceSelected(view){
     workspaces = await fetchMyWorkspaces();
     state.workspaceMode = "multi";
   }catch(e){
-    // Only fall back to legacy if the schema truly isn't present.
-    if(isMissingWorkspaceSchemaError(e)){
+    // Only fall back to legacy if the workspace schema truly is not installed.
+    if(isMissingTableErr(e) || isSchemaCacheErr(e)){
       state.workspaceMode = "legacy";
       state.workspaceId = "legacy";
       state.workspaceName = "Default Workspace";
@@ -1053,45 +1109,9 @@ async function ensureWorkspaceSelected(view){
       return true;
     }
 
-    // Schema exists, but we cannot read memberships (usually RLS/policy).
-    // If we already have a workspace selected from a previous session, keep going with it.
+    // Otherwise, keep multi-workspace mode and show a helpful error.
     state.workspaceMode = "multi";
-    const hasStoredWorkspace = !!(state.workspaceId && state.workspaceId !== "legacy");
-    if(hasStoredWorkspace){
-      state.workspaceName = state.workspaceName || "Workspace";
-      state.workspaceRole = state.workspaceRole || "member";
-
-      if(!state.__warnedWorkspaceMembershipRead){
-        state.__warnedWorkspaceMembershipRead = true;
-        console.warn("Workspace membership lookup failed; using stored workspace context.", e);
-        try{ toast("Workspace lookup failed (policies). Using last selected workspace."); }catch(_){}
-      }
-      return true;
-    }
-
-    // Otherwise, block and show actionable setup instructions.
-    console.warn("Workspace membership lookup failed.", e);
-    view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Workspace setup required"]),
-      el("div",{class:"muted", style:"margin-top:6px"},[
-        "Your workspace tables exist, but this signed-in user cannot read them yet (usually due to Supabase RLS policies)."
-      ]),
-      el("hr",{class:"sep"}),
-      el("div",{class:"small"},[
-        "Update your Supabase policies so members can:",
-        el("ul",{},[
-          el("li",{},["SELECT from workspace_members where user_id = auth.uid() OR where they share a workspace with auth.uid()"]),
-          el("li",{},["SELECT from workspaces for workspaces they belong to"])
-        ])
-      ]),
-      el("div",{class:"small muted", style:"margin-top:10px; white-space:pre-wrap"},[
-        String(e?.message || e || "")
-      ]),
-      el("div",{class:"row", style:"gap:10px; margin-top:12px; flex-wrap:wrap"},[
-        el("button",{class:"btn", onClick:()=>render()},["Retry"]),
-        el("button",{class:"btn secondary", onClick:()=>{ location.hash = "#dashboard"; render(); }},["Go to dashboard"])
-      ])
-    ]));
+    renderWorkspaceAccessBlocked(view, e);
     return false;
   }
 
@@ -1110,9 +1130,7 @@ async function ensureWorkspaceSelected(view){
   persistWorkspaceToLocalStorage();
 
   // Optional: expose a quick switcher in the hamburger menu (if present)
-  try{
-    wireWorkspaceMenu(workspaces);
-  }catch(_){}
+  try{ wireWorkspaceMenu(workspaces); }catch(_){}
 
   return true;
 }
@@ -1601,7 +1619,30 @@ async function renderWorkspace(view){
 }
 
 
-function renderCreateWorkspace(view){
+
+async function renderWorkspaceAccessBlocked(view, err){
+  const msg = _errMsg(err);
+  const details = [
+    "Your workspace tables exist, but this signed-in user cannot read them yet (usually due to Supabase RLS policies).",
+    "Fix in Supabase:",
+    "• Enable RLS on public.workspaces and public.workspace_members",
+    "• Add SELECT policies so members can read workspace_members and their workspaces",
+    "",
+    "Error:",
+    msg || "(no message)"
+  ].join("\n");
+
+  view.replaceChildren(el("div",{class:"card"},[
+    el("h2",{},["Workspace access blocked"]),
+    el("pre",{class:"pre"},[details]),
+    el("div",{class:"row", style:"gap:10px; flex-wrap:wrap;"},[
+      el("button",{class:"btn", onClick:async()=>{ await render(); }},["Retry"]),
+      el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Go to dashboard"])
+    ])
+  ]));
+}
+
+async function renderCreateWorkspace(view){
   const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
   card.appendChild(el("h1",{},["Create your workspace"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
@@ -1766,7 +1807,7 @@ function renderNeedsConfig(view){
   ]));
 }
 
-function renderAuth(view){
+async function renderAuth(view){
   const card = el("div",{class:"card", style:"max-width:520px; margin:24px auto"});
   card.appendChild(el("h1",{},["Sign in to Javi"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
