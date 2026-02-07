@@ -393,7 +393,7 @@ function calEventsInRange(events, start, end){
   }).sort((x,y)=>new Date(x.start_at)-new Date(y.start_at));
 }
 
-async function renderDashboardCalendarCard(events){
+function renderDashboardCalendarCard(events){
   const now = new Date();
   let anchor = new Date(now);
   let viewMode = calGetView(); // "day" | "week" | "month"
