@@ -35,3 +35,8 @@ What this is:
 Notes
 - This is “Option A”: simplest shared workspace policies.
 - If you later want roles (admin/member) or multiple workspaces, we add workspace tables + stricter RLS.
+
+QR workflow
+- Each gear item now has an optional `qr_code` value.
+- In an event, use **Scan QR to reserve** to add gear quickly, and while event is ongoing use **Scan QR to return item**.
+- Browser QR scanning uses `BarcodeDetector` + camera; if unavailable, you can paste the scanned code manually.
