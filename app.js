@@ -1,3 +1,4 @@
+
 var supabase;
 // JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
@@ -1043,27 +1044,12 @@ async function ensureWorkspaceSelected(view){
     workspaces = await fetchMyWorkspaces();
     state.workspaceMode = "multi";
   }catch(e){
-    if(isMissingWorkspaceSchemaError(e)){
-      // Legacy fallback only when workspace tables/columns are truly unavailable.
-      state.workspaceMode = "legacy";
-      state.workspaceId = "legacy";
-      state.workspaceName = "Default Workspace";
-      state.workspaceRole = "owner";
-      return true;
-    }
-
-    state.workspaceMode = "multi";
-    view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Workspace unavailable"]),
-      el("div",{class:"muted", style:"margin-top:6px"},[
-        "Could not load your workspaces right now."
-      ]),
-      el("hr",{class:"sep"}),
-      el("div",{class:"small"},[
-        e?.message || String(e)
-      ])
-    ]));
-    return false;
+    // Legacy fallback: allow app usage when workspace tables are not present yet.
+    state.workspaceMode = "legacy";
+    state.workspaceId = "legacy";
+    state.workspaceName = "Default Workspace";
+    state.workspaceRole = "owner";
+    return true;
   }
 
   if(!workspaces.length){
@@ -1303,7 +1289,16 @@ async function leaveCurrentWorkspace(){
 
 async function renderWorkspace(view){
   if(state.workspaceMode === "legacy"){
-    location.hash = "#dashboard";
+    view.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Workspace"]),
+      el("div",{class:"muted", style:"margin-top:6px"},[
+        "Workspace management is unavailable until the workspace SQL migration is run."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"small"},[
+        "Your app is using legacy single-workspace mode so Gear, Events, and Kits remain available."
+      ])
+    ]));
     return;
   }
 
@@ -1809,6 +1804,8 @@ async function renderOnce(){
   // even when setup is blocked by an error card/create-workspace flow.
   syncWorkspaceNavigation();
   if(!workspaceReady) return;
+
+  syncWorkspaceNavigation();
 
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
