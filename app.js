@@ -175,10 +175,21 @@ function el(tag, attrs={}, children=[]){
     else if(k.startsWith("on") && typeof v==="function") e.addEventListener(k.slice(2).toLowerCase(), v);
     else e.setAttribute(k, v);
   }
-  for(const c of children){
-    if(typeof c==="string") e.appendChild(document.createTextNode(c));
-    else if(c) e.appendChild(c);
-  }
+
+  const append = (child)=>{
+    if(child==null || child===false) return;
+    if(Array.isArray(child)){
+      child.forEach(append);
+      return;
+    }
+    if(child instanceof Node){
+      e.appendChild(child);
+      return;
+    }
+    e.appendChild(document.createTextNode(String(child)));
+  };
+
+  append(children);
   return e;
 }
 
