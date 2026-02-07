@@ -150,6 +150,19 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   color: var(--text);
 }
 
+
+.settingsWrap{position:relative}
+.settingsMenu{
+  position:absolute;
+  right:0;
+  top:calc(100% + 8px);
+  min-width:220px;
+  display:none;
+  z-index:30;
+}
+.settingsMenu.open{display:block}
+.settingsMenu .btn{width:100%; justify-content:flex-start}
+
 /* ---------- Buttons ---------- */
 .btn{
   border:1px solid color-mix(in srgb, var(--border) 92%, transparent);
