@@ -21,9 +21,15 @@
           <a href="#kits" data-route="kits">Kits</a>
         </nav>
       </div>
-      <div class="row">
-        <button class="btn secondary" id="themeBtn" title="Toggle theme">Dark</button>
-        <button class="btn secondary" id="logoutBtn" title="Sign out" style="display:none">Sign out</button>
+      <div class="row settingsWrap" id="settingsWrap" style="display:none">
+        <button class="btn secondary" id="settingsBtn" title="Open settings" type="button">Settings ▾</button>
+        <div class="settingsMenu card" id="settingsMenu">
+          <div class="stack" style="gap:10px">
+            <button class="btn secondary" id="settingsWorkspaceBtn" type="button">Workspace</button>
+            <button class="btn secondary" id="settingsThemeBtn" type="button">Dark</button>
+            <button class="btn secondary" id="logoutBtn" type="button">Sign out</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

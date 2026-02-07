@@ -175,10 +175,21 @@ function el(tag, attrs={}, children=[]){
     else if(k.startsWith("on") && typeof v==="function") e.addEventListener(k.slice(2).toLowerCase(), v);
     else e.setAttribute(k, v);
   }
-  for(const c of children){
-    if(typeof c==="string") e.appendChild(document.createTextNode(c));
-    else if(c) e.appendChild(c);
-  }
+
+  const append = (child)=>{
+    if(child==null || child===false) return;
+    if(Array.isArray(child)){
+      child.forEach(append);
+      return;
+    }
+    if(child instanceof Node){
+      e.appendChild(child);
+      return;
+    }
+    e.appendChild(document.createTextNode(String(child)));
+  };
+
+  append(children);
   return e;
 }
 
@@ -196,20 +207,10 @@ function setupHeaderUX(){
   // Reorder nav links if present
   const nav = document.querySelector("#nav");
   if(nav){
-    const order = ["dashboard","events","gear","kits","workspace"];
+    const order = ["dashboard","events","gear","kits"];
     const links = Array.from(nav.querySelectorAll("a[data-route]"));
     const byRoute = Object.fromEntries(links.map(a=>[a.dataset.route,a]));
     order.forEach(r=>{ if(byRoute[r]) nav.appendChild(byRoute[r]); });
-
-    // Add Workspace link if the HTML nav does not include it
-    if(!nav.querySelector('a[data-route="workspace"]')){
-      const a = document.createElement("a");
-      a.href = "#workspace";
-      a.dataset.route = "workspace";
-      a.textContent = "Workspace";
-      nav.appendChild(a);
-    }
-
   }
 
   // Create hamburger + menu (append to BODY so it always exists, regardless of header markup)
@@ -234,15 +235,15 @@ function setupHeaderUX(){
     document.body.appendChild(btn);
     document.body.appendChild(menu);
 
-    const themeBtn = document.querySelector("#themeBtn");
+    const settingsThemeBtn = document.querySelector("#settingsThemeBtn");
     const logoutBtn = document.querySelector("#logoutBtn");
-    if(!themeBtn) menu.querySelector("#menuThemeBtn").style.display="none";
+    if(!settingsThemeBtn) menu.querySelector("#menuThemeBtn").style.display="none";
     if(!logoutBtn) menu.querySelector("#menuLogoutBtn").style.display="none";
 
     const close = ()=> menu.classList.remove("open");
     btn.addEventListener("click",(e)=>{ e.preventDefault(); menu.classList.toggle("open"); });
 
-    menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); themeBtn?.click(); });
+    menu.querySelector("#menuThemeBtn")?.addEventListener("click",()=>{ close(); settingsThemeBtn?.click(); });
 
     // Workspace shortcut
     menu.querySelector("#menuWorkspaceBtn")?.addEventListener("click",()=>{ close(); location.hash = "#workspace"; });
@@ -284,7 +285,7 @@ function setupHeaderUX(){
 
       @media (max-width: 900px){
         header{ padding-top: calc(env(safe-area-inset-top, 0px) + 20px) !important; }
-        #themeBtn, #logoutBtn{ display:none !important; }
+        #settingsWrap{ display:none !important; }
         #hamburgerBtn{ display:inline-flex !important; }
       }
     `;
@@ -392,7 +393,7 @@ function calEventsInRange(events, start, end){
   }).sort((x,y)=>new Date(x.start_at)-new Date(y.start_at));
 }
 
-async function renderDashboardCalendarCard(events){
+function renderDashboardCalendarCard(events){
   const now = new Date();
   let anchor = new Date(now);
   let viewMode = calGetView(); // "day" | "week" | "month"
@@ -725,7 +726,14 @@ async function fetchDisplayNamesForUserIds(userIds){
 function setTheme(theme){
   state.theme=theme;
   document.documentElement.setAttribute("data-theme", theme);
-  $("#themeBtn").textContent = theme === "dark" ? "Dark" : "Light";
+  const settingsThemeBtn = $("#settingsThemeBtn");
+  if(settingsThemeBtn){
+    settingsThemeBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  }
+  const menuThemeBtn = $("#menuThemeBtn");
+  if(menuThemeBtn){
+    menuThemeBtn.textContent = theme === "dark" ? "Theme: Dark" : "Theme: Light";
+  }
   localStorage.setItem("javi_theme", theme);
 }
 
@@ -917,6 +925,10 @@ function syncWorkspaceNavigation(){
   const menuWorkspaceBtn = document.querySelector("#menuWorkspaceBtn");
   if(menuWorkspaceBtn){
     menuWorkspaceBtn.style.display = legacy ? "none" : "";
+  }
+  const settingsWorkspaceBtn = document.querySelector("#settingsWorkspaceBtn");
+  if(settingsWorkspaceBtn){
+    settingsWorkspaceBtn.style.display = legacy ? "none" : "";
   }
 }
 
@@ -1513,32 +1525,47 @@ async function renderWorkspace(view){
       el("hr",{class:"sep"}),
       el("div",{style:"font-weight:800; color:var(--danger)"},["Danger zone"]),
       el("div",{class:"muted small", style:"margin-top:6px"},[
-        "Delete this workspace and all data (events, gear, kits, reservations, checkouts, memberships) for every user in it."
+        "Delete your account. This also deletes your workspace and all associated data in Supabase (events, gear, kits, reservations, checkouts, and memberships)."
       ])
     ]);
     const deleteBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick:async ()=>{
-      if(!state.workspaceId) return;
-      const confirmName = prompt(`Type the workspace name (${state.workspaceName || "workspace"}) to confirm deletion:`);
+      if(!state.workspaceId || !state.user?.id) return;
+      const confirmName = prompt(`Type the workspace name (${state.workspaceName || "workspace"}) to confirm account deletion:`);
       if((confirmName||"").trim() !== String(state.workspaceName||"").trim()){
         toast("Workspace name did not match. Deletion canceled.");
         return;
       }
-      if(!confirm("Final confirmation: permanently delete this workspace and all data for all users?")) return;
+      if(!confirm("Final confirmation: permanently delete your account and this workspace for all users?")) return;
       try{
         deleteBtn.disabled = true;
-        deleteBtn.textContent = "Deleting…";
-        await deleteWorkspaceAndAllData(state.workspaceId);
-        toast("Workspace deleted.");
+        deleteBtn.textContent = "Deleting account…";
+
+        const workspaceId = state.workspaceId;
+
+        // 1) delete workspace + data
+        const { error: workspaceDeleteError } = await supabase.rpc("javi_delete_workspace_and_data", { p_workspace_id: workspaceId });
+        if(workspaceDeleteError) throw workspaceDeleteError;
+
+        // 2) delete auth user
+        const { error: deleteMeError } = await supabase.functions.invoke("delete-me");
+        if(deleteMeError) throw deleteMeError;
+
+        // 3) sign out locally
+        await supabase.auth.signOut();
+
         clearWorkspaceSelection();
+        localStorage.removeItem("javi_display_name");
+        state.displayName = "";
+        toast("Account deleted.");
         location.hash = "#dashboard";
         render();
       }catch(e){
         toast(e?.message || String(e));
       }finally{
         deleteBtn.disabled = false;
-        deleteBtn.textContent = "Delete workspace";
+        deleteBtn.textContent = "Delete account";
       }
-    }},["Delete workspace"]);
+    }},["Delete account"]);
     danger.appendChild(deleteBtn);
     inviteBox.appendChild(danger);
   } else {
@@ -1857,9 +1884,11 @@ async function renderOnce(){
   view.innerHTML="";
 
   const cfg = requireConfig();
+  const nav = $("#nav");
   if(!cfg){
-    $("#logoutBtn").style.display="none";
-    $("#nav").style.visibility="hidden";
+    const settingsWrap = $("#settingsWrap");
+    if(settingsWrap) settingsWrap.style.display = "none";
+    if(nav) nav.style.visibility="hidden";
     renderNeedsConfig(view);
     return;
   }
@@ -1872,8 +1901,9 @@ async function renderOnce(){
   state.user = session?.user || null;
   state.displayName = pickDisplayName(state.user);
   if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
-  $("#logoutBtn").style.display = state.user ? "inline-flex" : "none";
-  $("#nav").style.visibility = state.user ? "visible" : "hidden";
+  const settingsWrap = $("#settingsWrap");
+  if(settingsWrap) settingsWrap.style.display = state.user ? "flex" : "none";
+  if(nav) nav.style.visibility = state.user ? "visible" : "hidden";
 
   if(!state.user){
     renderAuth(view);
@@ -3223,14 +3253,37 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("hashchange", render);
 
-$("#themeBtn").addEventListener("click", ()=> setTheme(state.theme==="dark" ? "light" : "dark"));
-$("#logoutBtn").addEventListener("click", async ()=>{
+$("#settingsBtn")?.addEventListener("click", (e)=>{
+  e.preventDefault();
+  $("#settingsMenu")?.classList.toggle("open");
+});
+
+document.addEventListener("click", (e)=>{
+  const wrap = $("#settingsWrap");
+  const menu = $("#settingsMenu");
+  if(!wrap || !menu || !menu.classList.contains("open")) return;
+  if(wrap.contains(e.target)) return;
+  menu.classList.remove("open");
+});
+
+$("#settingsThemeBtn")?.addEventListener("click", ()=>{
+  setTheme(state.theme==="dark" ? "light" : "dark");
+  $("#settingsMenu")?.classList.remove("open");
+});
+
+$("#settingsWorkspaceBtn")?.addEventListener("click", ()=>{
+  location.hash = "#workspace";
+  $("#settingsMenu")?.classList.remove("open");
+});
+
+$("#logoutBtn")?.addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
   clearWorkspaceLocalStorage();
   localStorage.removeItem("javi_display_name");
   state.displayName = "";
   toast("Signed out.");
+  $("#settingsMenu")?.classList.remove("open");
   location.hash="#dashboard";
   render();
 });
