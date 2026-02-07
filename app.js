@@ -1303,6 +1303,32 @@ async function renderWorkspace(view){
   // Owner-only: invite link generator
   if(canManageWorkspace()){
     inviteBox.appendChild(el("hr",{class:"sep"}));
+    inviteBox.appendChild(el("div",{style:"font-weight:800"},["Workspace settings"]));
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+      "Owners can rename this workspace for everyone."
+    ]));
+    const renameInput = el("input",{class:"input", style:"margin-top:10px", value: state.workspaceName || "", placeholder:"Workspace name"});
+    const renameBtn = el("button",{class:"btn secondary", style:"margin-top:10px", onClick: async ()=>{
+      const next = String(renameInput.value || "").trim();
+      if(!next){ toast("Workspace name is required."); return; }
+      try{
+        renameBtn.disabled = true;
+        renameBtn.textContent = "Saving…";
+        const updated = await renameCurrentWorkspace(next);
+        renameInput.value = updated;
+        toast("Workspace renamed.");
+        render();
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        renameBtn.disabled = false;
+        renameBtn.textContent = "Save workspace name";
+      }
+    }},["Save workspace name"]);
+    inviteBox.appendChild(renameInput);
+    inviteBox.appendChild(renameBtn);
+
+    inviteBox.appendChild(el("hr",{class:"sep"}));
     inviteBox.appendChild(el("div",{style:"font-weight:800"},["Invite users"]));
     inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
       "Create a link and send it to someone. When they sign in, the app will add them to this workspace."
