@@ -1873,7 +1873,7 @@ async function renderOnce(){
   if(!cfg){
     const settingsWrap = $("#settingsWrap");
     if(settingsWrap) settingsWrap.style.display = "none";
-    if(nav) nav.style.visibility="hidden";
+    $("#nav").style.visibility="hidden";
     renderNeedsConfig(view);
     return;
   }
@@ -1888,7 +1888,7 @@ async function renderOnce(){
   if(state.displayName) localStorage.setItem("javi_display_name", state.displayName);
   const settingsWrap = $("#settingsWrap");
   if(settingsWrap) settingsWrap.style.display = state.user ? "flex" : "none";
-  if(nav) nav.style.visibility = state.user ? "visible" : "hidden";
+  $("#nav").style.visibility = state.user ? "visible" : "hidden";
 
   if(!state.user){
     renderAuth(view);
@@ -3261,7 +3261,7 @@ $("#settingsWorkspaceBtn")?.addEventListener("click", ()=>{
   $("#settingsMenu")?.classList.remove("open");
 });
 
-$("#logoutBtn")?.addEventListener("click", async ()=>{
+$("#logoutBtn").addEventListener("click", async ()=>{
   if(!supabase) return;
   await supabase.auth.signOut();
   clearWorkspaceLocalStorage();
