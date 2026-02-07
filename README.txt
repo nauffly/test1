@@ -40,3 +40,16 @@ QR workflow
 - Each gear item now has an optional `qr_code` value.
 - In an event, use **Scan QR to reserve** to add gear quickly, and while event is ongoing use **Scan QR to return item**.
 - Browser QR scanning uses `BarcodeDetector` + camera; if unavailable, you can paste the scanned code manually.
+
+QR setup troubleshooting (Supabase)
+- Error: `Could not find the 'qr_code' column of 'gear_items' in the schema cache`
+  1) Open Supabase Dashboard → SQL Editor.
+  2) Run this SQL in your project:
+
+  alter table public.gear_items
+    add column if not exists qr_code text default '';
+
+  notify pgrst, 'reload schema';
+
+  3) Refresh the app and try saving gear again.
+- Why this happens: your project was created before the QR feature and is missing the new column.
