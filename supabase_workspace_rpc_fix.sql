@@ -125,78 +125,12 @@ begin
 end;
 $$;
 
-
--- Compatibility wrappers for older clients that call alternative arg names.
-create or replace function public.javi_delete_workspace(wid uuid)
-returns void
-language sql
-security definer
-set search_path = public
-as $$
-  select public.javi_delete_workspace(p_workspace_id := wid);
-$$;
-
-create or replace function public.javi_delete_workspace(id uuid)
-returns void
-language sql
-security definer
-set search_path = public
-as $$
-  select public.javi_delete_workspace(p_workspace_id := id);
-$$;
-
-create or replace function public.javi_delete_workspace(workspace uuid)
-returns void
-language sql
-security definer
-set search_path = public
-as $$
-  select public.javi_delete_workspace(p_workspace_id := workspace);
-$$;
-
-
--- Member self-removal helper (non-owners can leave workspaces).
-create or replace function public.javi_leave_workspace(p_workspace_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_role text;
-begin
-  if p_workspace_id is null then
-    raise exception 'workspace id required';
-  end if;
-
-  select role into v_role
-  from public.workspace_members
-  where workspace_id = p_workspace_id and user_id = auth.uid();
-
-  if v_role is null then
-    return;
-  end if;
-
-  if lower(coalesce(v_role,'')) = 'owner' then
-    raise exception 'owner cannot leave workspace';
-  end if;
-
-  delete from public.workspace_members
-  where workspace_id = p_workspace_id
-    and user_id = auth.uid();
-end;
-$$;
-
 -- Permissions
 revoke all on function public.javi_is_workspace_owner(uuid) from public;
 grant execute on function public.javi_is_workspace_owner(uuid) to authenticated;
 
 grant execute on function public.javi_set_member_display_name(uuid, text, uuid) to authenticated;
 grant execute on function public.javi_list_workspace_members(uuid) to authenticated;
-grant execute on function public.javi_leave_workspace(uuid) to authenticated;
 grant execute on function public.javi_delete_workspace(uuid) to authenticated;
-grant execute on function public.javi_delete_workspace(wid uuid) to authenticated;
-grant execute on function public.javi_delete_workspace(id uuid) to authenticated;
-grant execute on function public.javi_delete_workspace(workspace uuid) to authenticated;
 
 commit;

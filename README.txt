@@ -60,14 +60,10 @@ Workspace troubleshooting (no JS changes)
 - In Supabase SQL Editor, run `supabase_workspace_rpc_fix.sql` from this repo.
 - This creates/updates:
   - `javi_delete_workspace(p_workspace_id uuid)`
-  - compatibility wrappers for `javi_delete_workspace(wid uuid)`, `(id uuid)`, `(workspace uuid)`
   - `javi_set_member_display_name(p_workspace_id uuid, p_display_name text, p_user_id uuid default auth.uid())`
   - `javi_list_workspace_members(p_workspace_id uuid)`
-  - `javi_leave_workspace(p_workspace_id uuid)` for member self-removal
 - After running SQL, reload PostgREST cache by running:
   `notify pgrst, 'reload schema';`
-- If errors persist after SQL changes, clear old service worker cache in browser DevTools (Application → Service Workers → Unregister) and hard refresh.
-- Service worker is temporarily disabled/self-unregistering to prevent stale-client behavior; hard refresh once after deploy.
 - Then refresh the app and test:
   - Delete workspace as owner
   - Save name as a user and confirm other members see the change
