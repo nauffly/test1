@@ -960,9 +960,10 @@ async function createInviteLink(workspaceId, role="member"){
 
   // Try multiple RPC signatures so your SQL can vary slightly.
   const tries = [
-    ["javi_create_invite", { workspace_id: workspaceId, role }],
-    ["javi_create_invite", { p_workspace_id: workspaceId, p_role: role }],
-    ["javi_create_invite", { wid: workspaceId, invite_role: role }]
+    // canonical: workspace_id + optional expiry/uses
+    ["javi_create_invite", { workspace_id: workspaceId, expires_hours: 168, max_uses: 25 }],
+    // alternate param naming (if you created SQL with p_* args)
+    ["javi_create_invite", { p_workspace_id: workspaceId, p_expires_hours: 168, p_max_uses: 25 }]
   ];
 
   let lastErr = null;
@@ -2071,6 +2072,10 @@ async function renderEventDetail(view, evt){
       el("button",{class:"btn secondary", onClick:()=>openEventModal(evt)},["Edit"]),
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm("Delete this event?")) return;
+        // Delete child rows first to avoid FK constraint failures (reservations reference events)
+        try{
+          await supabase.from("reservations").delete().eq("event_id", evt.id).eq("workspace_id", state.workspaceId);
+        }catch(e){ /* ignore */ }
         await sbDelete("events", evt.id);
         toast("Event deleted.");
         location.hash="#events";
