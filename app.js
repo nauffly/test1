@@ -1868,6 +1868,7 @@ async function renderOnce(){
   view.innerHTML="";
 
   const cfg = requireConfig();
+  const nav = $("#nav");
   if(!cfg){
     const settingsWrap = $("#settingsWrap");
     if(settingsWrap) settingsWrap.style.display = "none";
