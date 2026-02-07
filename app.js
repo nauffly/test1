@@ -1013,11 +1013,23 @@ async function tryAcceptInviteIfPresent(){
 }
 
 async function fetchWorkspaceMembers(workspaceId){
-  const {data, error} = await supabase
+  let data = null;
+  let error = null;
+
+  // Try reading display_name from workspace_members first (if column exists).
+  ({data, error} = await supabase
     .from("workspace_members")
-    .select("user_id, role, created_at")
+    .select("user_id, role, created_at, display_name")
     .eq("workspace_id", workspaceId)
-    .order("created_at", {ascending:true});
+    .order("created_at", {ascending:true}));
+
+  if(error && _isMissingColumnErr(error)){
+    ({data, error} = await supabase
+      .from("workspace_members")
+      .select("user_id, role, created_at")
+      .eq("workspace_id", workspaceId)
+      .order("created_at", {ascending:true}));
+  }
   if(error) throw error;
 
   const rows = data || [];
