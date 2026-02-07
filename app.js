@@ -1180,6 +1180,46 @@ function parseInviteTokenFromHash(){
   return null;
 }
 
+function isMissingAcceptInviteRpcError(err){
+  const msg = String(err?.message || err || "").toLowerCase();
+  return msg.includes("javi_accept_invite") && (msg.includes("could not find the function") || msg.includes("schema cache") || msg.includes("does not exist"));
+}
+
+async function acceptInviteViaTables(token){
+  const tokenCols = ["invite_token", "token", "code"];
+  let invite = null;
+  let lastErr = null;
+
+  for(const col of tokenCols){
+    try{
+      const {data, error} = await supabase
+        .from("workspace_invites")
+        .select("*")
+        .eq(col, token)
+        .maybeSingle();
+      if(error) throw error;
+      if(data){ invite = data; break; }
+    }catch(err){
+      lastErr = err;
+    }
+  }
+
+  if(!invite){
+    if(lastErr) throw lastErr;
+    throw new Error("Invite not found.");
+  }
+
+  const workspaceId = invite.workspace_id || invite.p_workspace_id || invite.wid || invite.workspace;
+  const role = String(invite.role || "member").trim() || "member";
+  if(!workspaceId) throw new Error("Invite is missing workspace id.");
+
+  const row = { workspace_id: workspaceId, user_id: state.user.id, role };
+  const {error: memberErr} = await supabase
+    .from("workspace_members")
+    .upsert(row, { onConflict: "workspace_id,user_id" });
+  if(memberErr) throw memberErr;
+}
+
 async function tryAcceptInviteIfPresent(){
   const token = parseInviteTokenFromHash();
   if(!token || !state.user) return false;
@@ -1187,13 +1227,26 @@ async function tryAcceptInviteIfPresent(){
   // Do not prompt for display name here. Users set their name in Workspace → Your profile.
   try{
     // Attempt common RPC signatures
-    try{
-      await sbRpc("javi_accept_invite", { invite_token: token });
-    }catch(e1){
+    const rpcArgs = [{ invite_token: token }, { token }, { p_token: token }];
+    let rpcErr = null;
+    let acceptedViaRpc = false;
+
+    for(const args of rpcArgs){
       try{
-        await sbRpc("javi_accept_invite", { token });
-      }catch(e2){
-        await sbRpc("javi_accept_invite", { p_token: token });
+        await sbRpc("javi_accept_invite", args);
+        acceptedViaRpc = true;
+        break;
+      }catch(e){
+        rpcErr = e;
+      }
+    }
+
+    // Fallback for environments where the accept-invite RPC was not installed.
+    if(!acceptedViaRpc){
+      if(isMissingAcceptInviteRpcError(rpcErr)){
+        await acceptInviteViaTables(token);
+      }else if(rpcErr){
+        throw rpcErr;
       }
     }
 
