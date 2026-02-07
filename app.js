@@ -681,10 +681,11 @@ async function sbUpdate(table, id, patch){
   return data;
 }
 async function sbDelete(table, id){
-  // Ask for deleted rows so we can detect no-op deletes and safely retry when needed.
-  let q = supabase.from(table).delete().eq("id", id).select("id");
-  if(TENANT_TABLES.has(table) && state.workspaceId){
-    q = q.eq("workspace_id", state.workspaceId);
+  // Keep tenant isolation while still supporting legacy rows with NULL workspace_id.
+  let q = supabase.from(table).delete().eq("id", id);
+  if(TENANT_TABLES.has(table)){
+    if(!state.workspaceId) throw new Error("No workspace selected.");
+    q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
   const {data, error} = await q;
   if(error) throw error;
@@ -759,6 +760,14 @@ async function sbBulkUpdateAudit(table, matchFn, patch){
 
 /** ---------- Workspace (multi-tenant) helpers ---------- **/
 const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
+
+function applyWorkspaceScope(q, includeLegacyNull=false){
+  if(!state.workspaceId) throw new Error("No workspace selected.");
+  if(includeLegacyNull){
+    return q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
+  }
+  return q.eq("workspace_id", state.workspaceId);
+}
 
 function persistWorkspaceToLocalStorage(){
   if(state.workspaceId) localStorage.setItem("javi_workspace_id", state.workspaceId);
@@ -1227,12 +1236,11 @@ async function gearHasConflict(gearItemId, startAtISO, endAtISO){
   const endAt = new Date(endAtISO);
 
   // reservations
-  const {data: resv, error: e1} = await supabase
+  let qResv = supabase
     .from("reservations")
-    .select("id,start_at,end_at,status")
-    .eq("workspace_id", state.workspaceId)
-    .eq("gear_item_id", gearItemId)
-    .eq("status", "ACTIVE");
+    .select("id,start_at,end_at,status");
+  qResv = applyWorkspaceScope(qResv, true).eq("gear_item_id", gearItemId).eq("status", "ACTIVE");
+  const {data: resv, error: e1} = await qResv;
   if(e1) throw e1;
 
   for(const r of (resv||[])){
@@ -1240,11 +1248,11 @@ async function gearHasConflict(gearItemId, startAtISO, endAtISO){
   }
 
   // open checkouts
-  const {data: outs, error: e2} = await supabase
+  let qOuts = supabase
     .from("checkouts")
-    .select("id,due_at,status,items")
-    .eq("workspace_id", state.workspaceId)
-    .eq("status", "OPEN");
+    .select("id,due_at,status,items");
+  qOuts = applyWorkspaceScope(qOuts, true).eq("status", "OPEN");
+  const {data: outs, error: e2} = await qOuts;
   if(e2) throw e2;
 
   for(const c of (outs||[])){
@@ -1262,11 +1270,11 @@ async function getBlockedIdsForWindow(startAtISO, endAtISO, ignoreEventId=null){
   const blocked = new Set();
 
   // ACTIVE reservations overlapping this window
-  const {data: resvAll, error: rErr} = await supabase
+  let qBlockedResv = supabase
     .from("reservations")
-    .select("gear_item_id,event_id,start_at,end_at,status")
-    .eq("workspace_id", state.workspaceId)
-    .eq("status","ACTIVE");
+    .select("gear_item_id,event_id,start_at,end_at,status");
+  qBlockedResv = applyWorkspaceScope(qBlockedResv, true).eq("status","ACTIVE");
+  const {data: resvAll, error: rErr} = await qBlockedResv;
   if(rErr) throw rErr;
 
   for(const r of (resvAll||[])){
@@ -1277,11 +1285,11 @@ async function getBlockedIdsForWindow(startAtISO, endAtISO, ignoreEventId=null){
   }
 
   // OPEN checkouts with due_at after window start
-  const {data: outsAll, error: oErr} = await supabase
+  let qBlockedOuts = supabase
     .from("checkouts")
-    .select("due_at,status,items")
-    .eq("workspace_id", state.workspaceId)
-    .eq("status","OPEN");
+    .select("due_at,status,items");
+  qBlockedOuts = applyWorkspaceScope(qBlockedOuts, true).eq("status","OPEN");
+  const {data: outsAll, error: oErr} = await qBlockedOuts;
   if(oErr) throw oErr;
 
   for(const c of (outsAll||[])){
