@@ -1,3 +1,4 @@
+
 var supabase;
 // JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
@@ -636,6 +637,7 @@ const state = {
   theme: localStorage.getItem("javi_theme") || "dark",
   user: null,
   displayName: localStorage.getItem("javi_display_name") || "",
+  workspaceMode: "auto", // "multi" when workspace tables are available, otherwise "legacy"
 
   // Multi-tenant workspace context (Option B)
   workspaceId: localStorage.getItem("javi_workspace_id") || null,
@@ -658,13 +660,27 @@ async function upsertMyDisplayName(displayName){
   state.displayName = nm;
   localStorage.setItem("javi_display_name", nm);
 
+  // Update auth user_metadata (best-effort)
   try{ await supabase.auth.updateUser({ data:{ display_name:nm, name:nm, full_name:nm } }); }catch(_){ }
+
+  // Update profiles table (best-effort)
   try{
     const {error} = await supabase
       .from("profiles")
       .upsert({ id: state.user.id, display_name: nm, updated_at: new Date().toISOString() }, { onConflict:"id" });
     if(error) throw error;
   }catch(_){ }
+
+  // ALSO persist onto workspace_members so teammates can see it even if profiles is locked down by RLS.
+  if(state.workspaceId){
+    try{
+      await supabase
+        .from("workspace_members")
+        .update({ display_name: nm })
+        .eq("workspace_id", state.workspaceId)
+        .eq("user_id", state.user.id);
+    }catch(_){ }
+  }
 }
 
 async function fetchDisplayNamesForUserIds(userIds){
@@ -714,7 +730,7 @@ async function ensureServiceWorker(){
 /** ---------- Supabase data helpers ---------- **/
 async function sbGetAll(table, orderBy=null){
   let q = supabase.from(table).select("*");
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     q = applyWorkspaceScope(q, false);
   }
   if(orderBy) q = q.order(orderBy, {ascending:true});
@@ -725,7 +741,7 @@ async function sbGetAll(table, orderBy=null){
 async function sbGetById(table, id){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).select("*").eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     // After migration we should NOT have NULL workspace_id rows; keep strict scoping.
     q = q.eq("workspace_id", state.workspaceId);
@@ -736,7 +752,7 @@ async function sbGetById(table, id){
 }
 async function sbInsert(table, row){
   // Auto-attach workspace_id for tenant tables.
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     if(row && typeof row === "object" && !Array.isArray(row)){
       if(row.workspace_id == null) row = {...row, workspace_id: state.workspaceId};
@@ -749,7 +765,7 @@ async function sbInsert(table, row){
 async function sbUpdate(table, id, patch){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).update(patch).eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.eq("workspace_id", state.workspaceId);
   }
@@ -760,7 +776,7 @@ async function sbUpdate(table, id, patch){
 async function sbDelete(table, id){
   // Keep tenant isolation while still supporting legacy rows with NULL workspace_id.
   let q = supabase.from(table).delete().eq("id", id);
-  if(TENANT_TABLES.has(table)){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy"){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
@@ -769,7 +785,7 @@ async function sbDelete(table, id){
 
   // Some legacy rows may have NULL/missing workspace_id after migration.
   // If scoped delete removed nothing, retry by id only.
-  if(TENANT_TABLES.has(table) && (data || []).length === 0){
+  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy" && (data || []).length === 0){
     const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
     if(retryErr) throw retryErr;
   }
@@ -864,6 +880,7 @@ async function renameCurrentWorkspace(newName) {
 const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
 
 function applyWorkspaceScope(q, includeLegacyNull=false){
+  if(state.workspaceMode === "legacy") return q;
   if(!state.workspaceId) throw new Error("No workspace selected.");
   if(includeLegacyNull){
     return q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
@@ -939,53 +956,23 @@ async function sbRpc(fn, args){
 }
 
 async function fetchMyWorkspaces(){
-  // Fast path: embedded relationship (requires FK recognized by Supabase)
-  try{
-    const {data, error} = await supabase
-      .from("workspace_members")
-      .select("workspace_id, role, workspaces(name)")
-      .eq("user_id", state.user.id);
-    if(error) throw error;
+  // Requires: workspace_members has FK to workspaces as "workspaces"
+  const {data, error} = await supabase
+    .from("workspace_members")
+    .select("workspace_id, role, workspaces(name)")
+    .eq("user_id", state.user.id);
+  if(error) throw error;
 
-    const list = (data || []).map(r=>({
-      id: r.workspace_id,
-      role: r.role,
-      name: r.workspaces?.name || "Workspace"
-    }));
+  const list = (data || []).map(r=>({
+    id: r.workspace_id,
+    role: r.role,
+    name: r.workspaces?.name || "Workspace"
+  }));
 
-    list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-    return list;
-  }catch(_e){
-    // Fallback: two-step without relationship embedding
-    const {data: mem, error: memErr} = await supabase
-      .from("workspace_members")
-      .select("workspace_id, role, display_name")
-      .eq("user_id", state.user.id);
-
-    if(memErr) throw memErr;
-
-    const ids = (mem || []).map(r=>r.workspace_id).filter(Boolean);
-    if(!ids.length) return [];
-
-    const {data: ws, error: wsErr} = await supabase
-      .from("workspaces")
-      .select("id, name")
-      .in("id", ids);
-
-    if(wsErr) throw wsErr;
-
-    const nameById = Object.fromEntries((ws||[]).map(w=>[w.id, w.name]));
-    const list = (mem || []).map(r=>({
-      id: r.workspace_id,
-      role: r.role,
-      name: nameById[r.workspace_id] || "Workspace"
-    }));
-
-    list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-    return list;
-  }
+  // stable ordering
+  list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  return list;
 }
-
 
 
 async function canCreateAnotherWorkspace(){
@@ -1020,22 +1007,14 @@ async function ensureWorkspaceSelected(view){
   let workspaces = [];
   try{
     workspaces = await fetchMyWorkspaces();
+    state.workspaceMode = "multi";
   }catch(e){
-    // If the migration hasn't been run yet, show a helpful message.
-    view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Workspace setup required"]),
-      el("div",{class:"muted", style:"margin-top:6px"},[
-        "Your database is not set up for multi-user workspaces yet."
-      ]),
-      el("hr",{class:"sep"}),
-      el("div",{class:"small", style:"margin-top:8px; white-space:pre-wrap"},[
-        "Error: " + String(e?.message || e || "")
-      ]),
-      el("div",{class:"small", style:"margin-top:10px"},[
-        "Run the workspace SQL migration first, then refresh this page."
-      ])
-    ]));
-    return false;
+    // Legacy fallback: allow app usage when workspace tables are not present yet.
+    state.workspaceMode = "legacy";
+    state.workspaceId = "legacy";
+    state.workspaceName = "Default Workspace";
+    state.workspaceRole = "owner";
+    return true;
   }
 
   if(!workspaces.length){
@@ -1096,17 +1075,7 @@ async function tryAcceptInviteIfPresent(){
   const token = parseInviteTokenFromHash();
   if(!token || !state.user) return false;
 
-  const currentName = pickDisplayName(state.user);
-  if(!currentName){
-    const entered = prompt("Enter your display name for this workspace:") || "";
-    const nm = entered.trim();
-    if(!nm){
-      toast("Display name is required to join a workspace.");
-      return false;
-    }
-    await upsertMyDisplayName(nm);
-  }
-
+  // Do not prompt for display name here. Users set their name in Workspace → Your profile.
   try{
     // Attempt common RPC signatures
     try{
@@ -1163,6 +1132,7 @@ async function fetchWorkspaceMembers(workspaceId){
 
   const rows = data || [];
   const nameMap = await fetchDisplayNamesForUserIds(rows.map(r=>r.user_id));
+
   return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || r.display_name || "" }));
 }
 
@@ -1283,6 +1253,20 @@ async function leaveCurrentWorkspace(){
 }
 
 async function renderWorkspace(view){
+  if(state.workspaceMode === "legacy"){
+    view.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Workspace"]),
+      el("div",{class:"muted", style:"margin-top:6px"},[
+        "Workspace management is unavailable until the workspace SQL migration is run."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"small"},[
+        "Your app is using legacy single-workspace mode so Gear, Events, and Kits remain available."
+      ])
+    ]));
+    return;
+  }
+
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
       el("h1",{},["Workspace"]),
@@ -1713,19 +1697,15 @@ function renderAuth(view){
 
   const email = el("input",{class:"input", placeholder:"Email"});
   const pass = el("input",{class:"input", placeholder:"Password", type:"password", style:"margin-top:10px"});
-  const displayName = el("input",{class:"input", placeholder:"Display name (shown to teammates)", style:"margin-top:10px", value: state.displayName || ""});
   const msg = el("div",{class:"small muted", style:"margin-top:10px"},[""]);
 
   const row = el("div",{class:"row", style:"justify-content:flex-end; margin-top:12px"},[
     el("button",{class:"btn secondary", onClick: async ()=>{
       msg.textContent = "Creating account…";
       try{
-        const nm = displayName.value.trim();
-        if(!nm){ msg.textContent = "Display name is required."; return; }
-        const {data, error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value, options:{ data:{ display_name:nm, name:nm, full_name:nm } } });
+        const {error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-        msg.textContent = "Account created. If email confirmation is enabled, check your inbox; otherwise you can sign in now.";
-        if(data?.user){ state.user = data.user; await upsertMyDisplayName(nm); }
+        msg.textContent = "Account created. Sign in, then set your name in Workspace → Your profile.";
       }catch(e){
         msg.textContent = e.message || String(e);
       }
@@ -1735,9 +1715,7 @@ function renderAuth(view){
       try{
         const {data, error} = await supabase.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-        const nm = displayName.value.trim();
         state.user = data?.user || state.user;
-        if(nm) await upsertMyDisplayName(nm);
         msg.textContent = "Signed in.";
       }catch(e){
         msg.textContent = e.message || String(e);
@@ -1747,7 +1725,6 @@ function renderAuth(view){
 
   card.appendChild(email);
   card.appendChild(pass);
-  card.appendChild(displayName);
   card.appendChild(row);
   card.appendChild(msg);
 
