@@ -565,219 +565,6 @@ function modal(content){
   document.body.appendChild(overlay);
   return { close };
 }
-
-// -------- QR scanning (web) --------
-// Uses https://github.com/mebjas/html5-qrcode via CDN (loaded dynamically).
-let __qrLibPromise = null;
-
-function ensureQrLibLoaded(){
-  if(window.Html5Qrcode) return Promise.resolve(true);
-  if(__qrLibPromise) return __qrLibPromise;
-  __qrLibPromise = new Promise((resolve,reject)=>{
-    const existing = document.querySelector('script[data-html5-qrcode="1"]');
-    if(existing){
-      existing.addEventListener("load", ()=>resolve(true), {once:true});
-      existing.addEventListener("error", ()=>reject(new Error("Failed to load QR scanner library.")), {once:true});
-      return;
-    }
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js";
-    s.async = true;
-    s.dataset.html5Qrcode = "1";
-    s.onload = ()=>resolve(true);
-    s.onerror = ()=>reject(new Error("Failed to load QR scanner library."));
-    document.head.appendChild(s);
-  });
-  return __qrLibPromise;
-}
-
-function parseScanPayload(txt){
-  const raw = String(txt||"").trim();
-  if(!raw) return {raw:null, id:null, tag:null};
-
-  // Accept plain IDs, or prefixed payloads like "gear:<id>" or "tag:<assetTag>"
-  const m = raw.match(/^(gear|id|tag)\s*:\s*(.+)$/i);
-  if(m){
-    const kind = m[1].toLowerCase();
-    const val = String(m[2]||"").trim();
-    if(kind==="tag") return {raw, id:null, tag:val};
-    return {raw, id:val, tag:null};
-  }
-
-  return {raw, id:raw, tag:raw}; // fall back: try id first, then tag
-}
-
-async function markReservationScanned(resvId){
-  const nowIso = new Date().toISOString();
-  try{
-    await sbUpdate("reservations", resvId, { scanned_at: nowIso, updated_at: nowIso });
-    return true;
-  }catch(e){
-    const msg = (e?.message||String(e||"")).toLowerCase();
-    if(msg.includes("column") && msg.includes("scanned_at")){
-      alert(
-        "QR scanning needs a new column in Supabase.\n\n" +
-        "Run this SQL in Supabase (SQL Editor):\n\n" +
-        "ALTER TABLE reservations ADD COLUMN IF NOT EXISTS scanned_at timestamptz;\n"
-      );
-      return false;
-    }
-    throw e;
-  }
-}
-
-function injectScanStyles(){
-  if(document.querySelector("#javiScanStyles")) return;
-  const st = document.createElement("style");
-  st.id = "javiScanStyles";
-  st.textContent = `
-    .scanRowPending{ background: color-mix(in srgb, #facc15 20%, transparent); }
-    .scanRowDone{ background: color-mix(in srgb, #22c55e 18%, transparent); }
-    .scanBadge{ font-size:12px; padding:3px 8px; border-radius:999px; border:1px solid var(--border); }
-  `;
-  document.head.appendChild(st);
-}
-
-async function openEventQrScanner(opts){
-  // opts: { evt, reservations, gearById }
-  injectScanStyles();
-  await ensureQrLibLoaded();
-
-  const { evt, reservations, gearById } = opts;
-
-  const active = (reservations||[]).filter(r => String(r.status||"").toUpperCase()==="ACTIVE");
-  if(!active.length){
-    toast("No active reserved items to scan.");
-    return;
-  }
-
-  const byGearId = new Map(active.map(r=>[r.gear_item_id, r]));
-  const byAssetTag = new Map();
-  for(const r of active){
-    const g = gearById?.[r.gear_item_id];
-    const tag = String(g?.asset_tag||"").trim();
-    if(tag) byAssetTag.set(tag, r);
-  }
-
-  const regionId = "qrRegion_" + Math.random().toString(36).slice(2);
-  const statusLine = el("div",{class:"small muted", style:"margin-top:6px"},[
-    "Point your camera at a QR code. (Allow camera permission if prompted.)"
-  ]);
-
-  let scanner = null;
-  let stopped = false;
-
-  const content = el("div",{},[
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
-      el("h2",{},["Scan gear"]),
-      el("span",{class:"badge"},[`Event: ${evt.title || "—"}`])
-    ]),
-    el("div",{class:"muted small", style:"margin-top:6px"},[
-      "Each scan marks a reserved item as scanned (green). Unscanned items remain yellow."
-    ]),
-    el("hr",{class:"sep"}),
-    el("div",{id: regionId, style:"width:100%; max-width:520px; margin:0 auto;"} ,[]),
-    statusLine,
-    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px; gap:10px; flex-wrap:wrap"},[
-      el("button",{class:"btn secondary", type:"button", onClick: async ()=>{
-        // flip camera if supported
-        try{
-          if(scanner){
-            const cams = await Html5Qrcode.getCameras();
-            if(!cams || cams.length < 2){ toast("No alternate camera found."); return; }
-            const current = window.__javiCamId || cams[0].id;
-            const next = cams.find(c=>c.id!==current)?.id || cams[0].id;
-            window.__javiCamId = next;
-            await scanner.stop();
-            await scanner.start({ deviceId: { exact: next } }, { fps:10, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFail);
-            toast("Switched camera.");
-          }
-        }catch(_){ toast("Couldn't switch camera."); }
-      }},["Flip camera"]),
-      el("button",{class:"btn", type:"button", onClick: async ()=>{
-        await stop();
-        m.close();
-      }},["Done"])
-    ])
-  ]);
-
-  const m = modal(content);
-
-  async function stop(){
-    if(stopped) return;
-    stopped = true;
-    try{
-      if(scanner){
-        await scanner.stop();
-        await scanner.clear();
-      }
-    }catch(_){}
-  }
-
-  async function onScanSuccess(decodedText){
-    const parsed = parseScanPayload(decodedText);
-    const idCandidate = parsed.id;
-    const tagCandidate = parsed.tag;
-
-    let match = null;
-    if(idCandidate && byGearId.has(idCandidate)) match = byGearId.get(idCandidate);
-    if(!match && tagCandidate && byAssetTag.has(tagCandidate)) match = byAssetTag.get(tagCandidate);
-
-    if(!match){
-      statusLine.textContent = `Not in this event: "${parsed.raw}"`;
-      return;
-    }
-
-    // Already scanned?
-    if(match.scanned_at){
-      statusLine.textContent = "Already scanned.";
-      return;
-    }
-
-    statusLine.textContent = "Marking scanned…";
-    try{
-      const ok = await markReservationScanned(match.id);
-      if(!ok) { statusLine.textContent = "Scan disabled until DB updated."; return; }
-      statusLine.textContent = "Scanned ✓";
-      toast("Scanned.");
-      render(); // refresh list colors
-    }catch(e){
-      console.error(e);
-      statusLine.textContent = e.message || "Scan failed.";
-    }
-  }
-
-  function onScanFail(_err){
-    // ignore noisy decode failures
-  }
-
-  // Start scanner
-  try{
-    scanner = new Html5Qrcode(regionId);
-    const cams = await Html5Qrcode.getCameras();
-    let camId = window.__javiCamId || (cams?.[0]?.id || null);
-    if(!camId){
-      statusLine.textContent = "No camera found on this device.";
-      return;
-    }
-    window.__javiCamId = camId;
-    await scanner.start(
-      { deviceId: { exact: camId } },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      onScanSuccess,
-      onScanFail
-    );
-  }catch(e){
-    console.error(e);
-    statusLine.textContent = (e?.message || String(e||"")).includes("Permission")
-      ? "Camera permission denied. Allow camera access in your browser settings."
-      : (e?.message || "Could not start scanner.");
-  }
-
-  // Ensure scanner stops if modal is closed by clicking overlay
-  const oldClose = m.close;
-  m.close = ()=>{ stop(); oldClose(); };
-}
 function fileToDataURL(file){
   return new Promise((resolve,reject)=>{
     const r=new FileReader();
@@ -843,15 +630,7 @@ async function renderGear(view){
         el("div",{class:"stack", style:"align-items:flex-end"},[
           qtyBadge,
           el("button",{class:"btn secondary", onClick:()=>openGearModal(it, gr.qty)},["Edit"]),
-                el("button",{class:"btn secondary", type:"button", onClick: async ()=>{
-        try{
-          await openEventQrScanner({ evt, reservations, gearById });
-        }catch(e){
-          console.error(e);
-          toast(e.message || "Scanner error.");
-        }
-      }},["Scan gear"]),
-      el("button",{class:"btn danger", onClick:async ()=>{
+          el("button",{class:"btn danger", onClick:async ()=>{
             try{
               const msg = gr.qty>1 ? `Delete "${gr.name}" and its ${gr.qty} copies?` : `Delete "${gr.name}"?`;
               if(!confirm(msg)) return;
@@ -1284,14 +1063,11 @@ async function renderEventDetail(view, evt){
         if(cb.checked) selectedResvIds.add(r.id); else selectedResvIds.delete(r.id);
       });
 
-      listBox.appendChild(el("div",{class:"listItem " + (r.scanned_at ? "scanRowDone" : "scanRowPending")},[
+      listBox.appendChild(el("div",{class:"listItem"},[
         el("div",{class:"row", style:"gap:10px; align-items:flex-start"},[
           cb,
           el("div",{class:"stack"},[
-            el("div",{class:"row", style:"justify-content:space-between; align-items:center; gap:10px"},[
-              el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
-              el("span",{class:"scanBadge"},[r.scanned_at ? "Scanned" : "Not scanned"])
-            ]),
+            el("div",{style:"font-weight:700"},[`${it.category}: ${it.name}`]),
             el("div",{class:"kv"},[`${fmt(r.start_at)} → ${fmt(r.end_at)}`]),
           ])
         ]),
@@ -1775,3 +1551,6 @@ $("#logoutBtn").addEventListener("click", async ()=>{
   if(!location.hash) location.hash="#dashboard";
   render();
 })();
+
+// Calendar render restored
+view.appendChild(renderDashboardCalendarCard(events));
