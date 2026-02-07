@@ -53,3 +53,18 @@ QR setup troubleshooting (Supabase)
 
   3) Refresh the app and try saving gear again.
 - Why this happens: your project was created before the QR feature and is missing the new column.
+
+
+Workspace troubleshooting (no JS changes)
+- If you see: `Could not find the function public.javi_delete_workspace(...) in the schema cache`, you can fix this entirely in Supabase.
+- In Supabase SQL Editor, run `supabase_workspace_rpc_fix.sql` from this repo.
+- This creates/updates:
+  - `javi_delete_workspace(p_workspace_id uuid)`
+  - `javi_set_member_display_name(p_workspace_id uuid, p_display_name text, p_user_id uuid default auth.uid())`
+  - `javi_list_workspace_members(p_workspace_id uuid)`
+- After running SQL, reload PostgREST cache by running:
+  `notify pgrst, 'reload schema';`
+- If errors persist after SQL changes, clear old service worker cache in browser DevTools (Application → Service Workers → Unregister) and hard refresh.
+- Then refresh the app and test:
+  - Delete workspace as owner
+  - Save name as a user and confirm other members see the change
