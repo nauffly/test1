@@ -966,21 +966,45 @@ async function sbRpc(fn, args){
   return data;
 }
 
-async function fetchMyWorkspaces(){
-  // Requires: workspace_members has FK to workspaces as "workspaces"
-  const {data, error} = await supabase
-    .from("workspace_members")
-    .select("workspace_id, role, workspaces(name)")
-    .eq("user_id", state.user.id);
-  if(error) throw error;
+function isMissingWorkspaceSchemaError(err){
+  const code = String(err?.code || "").toUpperCase();
+  const msg = String(err?.message || err || "").toLowerCase();
+  if(code === "42P01" || code === "42703") return true; // undefined table / column
+  return (
+    msg.includes('workspace_members') && (msg.includes('does not exist') || msg.includes('could not find'))
+  ) || (
+    msg.includes('workspaces') && (msg.includes('does not exist') || msg.includes('could not find'))
+  );
+}
 
-  const list = (data || []).map(r=>({
+async function fetchMyWorkspaces(){
+  const {data: memberships, error: membersErr} = await supabase
+    .from("workspace_members")
+    .select("workspace_id, role")
+    .eq("user_id", state.user.id);
+  if(membersErr) throw membersErr;
+
+  const rows = memberships || [];
+  const ids = rows.map(r=>r.workspace_id).filter(Boolean);
+  const namesById = {};
+
+  if(ids.length){
+    const {data: wsRows, error: wsErr} = await supabase
+      .from("workspaces")
+      .select("id,name")
+      .in("id", ids);
+    if(wsErr && !isMissingColumnErr(wsErr)) throw wsErr;
+    for(const w of (wsRows || [])){
+      namesById[w.id] = w.name;
+    }
+  }
+
+  const list = rows.map(r=>({
     id: r.workspace_id,
     role: r.role,
-    name: r.workspaces?.name || "Workspace"
+    name: namesById[r.workspace_id] || "Workspace"
   }));
 
-  // stable ordering
   list.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   return list;
 }
@@ -1775,7 +1799,11 @@ async function renderOnce(){
   if(await tryAcceptInviteIfPresent()) { await render(); return; }
 
   // workspace gate (multi-tenant)
-  if(!(await ensureWorkspaceSelected(view))) return;
+  const workspaceReady = await ensureWorkspaceSelected(view);
+  // Always sync nav visibility after workspace mode is determined,
+  // even when setup is blocked by an error card/create-workspace flow.
+  syncWorkspaceNavigation();
+  if(!workspaceReady) return;
 
   syncWorkspaceNavigation();
 
