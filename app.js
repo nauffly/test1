@@ -1130,7 +1130,9 @@ async function fetchWorkspaceMembers(workspaceId){
 
   const rows = data || [];
   const nameMap = await fetchDisplayNamesForUserIds(rows.map(r=>r.user_id));
-  return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || "" }));
+  // Prefer profiles.display_name when readable; otherwise fall back to workspace_members.display_name
+  // so teams still see stable names even if profiles RLS blocks cross-user reads.
+  return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || r.display_name || "" }));
 }
 
 async function createInviteLink(workspaceId, role="member"){
@@ -1680,16 +1682,19 @@ function renderAuth(view){
 
   const email = el("input",{class:"input", placeholder:"Email"});
   const pass = el("input",{class:"input", placeholder:"Password", type:"password", style:"margin-top:10px"});
-  const displayName = el("input",{class:"input", placeholder:"Display name (shown to teammates)", style:"margin-top:10px", value: state.displayName || ""});
   const msg = el("div",{class:"small muted", style:"margin-top:10px"},[""]);
 
   const row = el("div",{class:"row", style:"justify-content:flex-end; margin-top:12px"},[
     el("button",{class:"btn secondary", onClick: async ()=>{
       msg.textContent = "Creating account…";
       try{
-        const nm = displayName.value.trim();
+        const nm = (prompt("Display name (shown to teammates):", state.displayName || "") || "").trim();
         if(!nm){ msg.textContent = "Display name is required."; return; }
-        const {data, error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value, options:{ data:{ display_name:nm, name:nm, full_name:nm } } });
+        const {data, error} = await supabase.auth.signUp({
+          email: email.value.trim(),
+          password: pass.value,
+          options:{ data:{ display_name:nm, name:nm, full_name:nm } }
+        });
         if(error) throw error;
         msg.textContent = "Account created. If email confirmation is enabled, check your inbox; otherwise you can sign in now.";
         if(data?.user){ state.user = data.user; await upsertMyDisplayName(nm); }
@@ -1702,9 +1707,14 @@ function renderAuth(view){
       try{
         const {data, error} = await supabase.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-        const nm = displayName.value.trim();
         state.user = data?.user || state.user;
-        if(nm) await upsertMyDisplayName(nm);
+
+        // If the user doesn't have a display name yet (metadata or profiles), ask once and persist.
+        state.displayName = pickDisplayName(state.user);
+        if(!state.displayName){
+          const nm = (prompt("Display name (shown to teammates):", "") || "").trim();
+          if(nm) await upsertMyDisplayName(nm);
+        }
         msg.textContent = "Signed in.";
       }catch(e){
         msg.textContent = e.message || String(e);
@@ -1714,7 +1724,6 @@ function renderAuth(view){
 
   card.appendChild(email);
   card.appendChild(pass);
-  card.appendChild(displayName);
   card.appendChild(row);
   card.appendChild(msg);
 
