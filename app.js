@@ -2424,18 +2424,8 @@ async function renderEventDetail(view, evt){
       const conflict = blockedIds.has(gearItemId);
       if(conflict){ conflicted++; continue; }
 
-      const row={
-        event_id: evt.id,
-        gear_item_id: gearItemId,
-        start_at: evt.start_at,
-        end_at: evt.end_at,
-        status:"ACTIVE"
-      };
-      row.reserved_by = _currentUser()?.id || null;
-      row.reserved_by_email = _currentUser()?.email || null;
-      await sbInsertAudit("reservations", row);
-      existingReservedIds.add(gearItemId);
-      added++;
+      const inserted = await tryReserveGearItem(gearItemId);
+      if(inserted) added++; else conflicted++;
     }
 
     if(added){
@@ -2524,6 +2514,26 @@ async function renderEventDetail(view, evt){
     }
   }
 
+  async function tryReserveGearItem(gearItemId){
+    // Re-check conflicts at write time to prevent stale UI state from causing double-booking.
+    const conflictNow = await gearHasConflict(gearItemId, evt.start_at, evt.end_at);
+    if(conflictNow) return false;
+
+    const row={
+      event_id: evt.id,
+      gear_item_id: gearItemId,
+      start_at: evt.start_at,
+      end_at: evt.end_at,
+      status:"ACTIVE",
+      reserved_by: _currentUser()?.id || null,
+      reserved_by_email: _currentUser()?.email || null
+    };
+    await sbInsertAudit("reservations", row);
+    existingReservedIds.add(gearItemId);
+    blockedIds.add(gearItemId);
+    return true;
+  }
+
 
   async function reserveFromScannedGear(rawValue){
     const found = findGearByScan(gear, rawValue);
@@ -2540,15 +2550,13 @@ async function renderEventDetail(view, evt){
       return;
     }
 
-    await sbInsertAudit("reservations", {
-      event_id: evt.id,
-      gear_item_id: found.id,
-      start_at: evt.start_at,
-      end_at: evt.end_at,
-      status:"ACTIVE",
-      reserved_by: _currentUser()?.id || null,
-      reserved_by_email: _currentUser()?.email || null
-    });
+    const inserted = await tryReserveGearItem(found.id);
+    if(!inserted){
+      toast("That item became unavailable in this event window.");
+      blockedIds.add(found.id);
+      refreshPick();
+      return;
+    }
     await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
     toast(`Reserved ${found.name}.`);
     render();
@@ -2571,25 +2579,23 @@ async function renderEventDetail(view, evt){
       return;
     }
 
+    let insertedCount = 0;
     for(const id of chosen){
-      const row={
-        event_id: evt.id,
-        gear_item_id: id,
-        start_at: evt.start_at,
-        end_at: evt.end_at,
-        status:"ACTIVE"
-      };
-      row.reserved_by = _currentUser()?.id || null;
-      row.reserved_by_email = _currentUser()?.email || null;
-      await sbInsertAudit("reservations", row);
+      const inserted = await tryReserveGearItem(id);
+      if(inserted) insertedCount++;
+      else blockedIds.add(id);
     }
 
-    await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
+    if(insertedCount>0){
+      await sbUpdate("events", evt.id, { status:"RESERVED", updated_at: new Date().toISOString() });
+    }
 
-    if(chosen.length===want){
-      toast(chosen.length===1 ? "Reserved." : `Reserved ${chosen.length}.`);
+    if(insertedCount===want){
+      toast(insertedCount===1 ? "Reserved." : `Reserved ${insertedCount}.`);
+    } else if(insertedCount>0){
+      toast(`Reserved ${insertedCount} (some became unavailable).`);
     } else {
-      toast(`Reserved ${chosen.length} (only ${chosen.length} available).`);
+      toast("No selected items were available.");
     }
     render();
   }
