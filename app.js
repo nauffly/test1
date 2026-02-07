@@ -1091,7 +1091,7 @@ async function createWorkspaceByName(wsNameRaw){
   return created;
 }
 
-async async function ensureWorkspaceSelected(view){
+async function ensureWorkspaceSelected(view){
   // Returns true if workspace is ready; otherwise renders setup UI and returns false.
   if(!state.user) return false;
 
