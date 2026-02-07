@@ -646,6 +646,7 @@ const state = {
   workspaceRole: localStorage.getItem("javi_workspace_role") || null,
 
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
+  inviteJoinError: null,
 };
 
 
@@ -1128,9 +1129,11 @@ async function ensureWorkspaceSelected(view){
   }
 
   if(!workspaces.length){
-    // If user arrived via an invite link, skip the create-workspace prompt.
-    // We'll accept the invite after auth, then re-run workspace selection.
+    // If user arrived via an invite link, do NOT show create-workspace UI.
+    // Show a dedicated screen so the user isn't dropped onto a blank page
+    // if invite acceptance fails.
     if(hasInviteInUrl()){
+      renderJoinWorkspaceFromInvite(view);
       return false;
     }
     renderCreateWorkspace(view);
@@ -1266,7 +1269,8 @@ async function tryAcceptInviteIfPresent(){
     return true;
   }catch(e){
     console.warn(e);
-    toast(e?.message || "Invite failed.");
+    state.inviteJoinError = e?.message || String(e);
+    toast(state.inviteJoinError || "Invite failed.");
     // Keep the hash so user can retry after fixing policies
     return false;
   }
@@ -1744,6 +1748,46 @@ async function renderWorkspaceAccessBlocked(view, err){
       el("button",{class:"btn secondary", onClick:()=>{ location.hash="#dashboard"; }},["Go to dashboard"])
     ])
   ]));
+}
+
+
+function renderJoinWorkspaceFromInvite(view){
+  const token = parseInviteTokenFromHash();
+  const err = state.inviteJoinError ? String(state.inviteJoinError) : "";
+
+  const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
+  card.appendChild(el("h1",{},["Join shared workspace"]));
+  card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+    "You're signed in and trying to join a shared workspace.",
+    el("br"),
+    "If this stalls, it's usually a Supabase SQL function mismatch (javi_accept_invite) or a workspace_invites column name mismatch."
+  ]));
+  card.appendChild(el("hr",{class:"sep"}));
+
+  if(token){
+    card.appendChild(el("div",{class:"small muted"},["Invite token: ", el("span",{class:"badge"},[String(token).slice(0,12)+"…"])]));
+  }
+
+  if(err){
+    card.appendChild(el("pre",{class:"pre", style:"margin-top:10px; white-space:pre-wrap"},["Invite error:\n" + err]));
+  }else{
+    card.appendChild(el("div",{class:"muted"},["Working… If nothing happens in a few seconds, tap Retry."]));
+  }
+
+  const actions = el("div",{class:"row", style:"justify-content:flex-end; gap:10px; flex-wrap:wrap; margin-top:12px"},[
+    el("button",{class:"btn secondary", onClick:()=>{
+      state.inviteJoinError = null;
+      location.hash = "#dashboard";
+      render();
+    }},["Go to dashboard"]),
+    el("button",{class:"btn", onClick:async ()=>{
+      state.inviteJoinError = null;
+      await render();
+    }},["Retry join"])
+  ]);
+
+  card.appendChild(actions);
+  view.appendChild(card);
 }
 
 async function renderCreateWorkspace(view){
