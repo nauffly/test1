@@ -653,7 +653,7 @@ function pickDisplayName(user){
 
 async function upsertMyDisplayName(displayName){
   const nm = String(displayName || "").trim();
-  if(!nm || !state.user?.id) return false;
+  if(!nm || !state.user?.id) return;
 
   state.displayName = nm;
   localStorage.setItem("javi_display_name", nm);
@@ -665,66 +665,6 @@ async function upsertMyDisplayName(displayName){
       .upsert({ id: state.user.id, display_name: nm, updated_at: new Date().toISOString() }, { onConflict:"id" });
     if(error) throw error;
   }catch(_){ }
-
-  const memberUpdated = await upsertWorkspaceMemberDisplayName(nm);
-  if(!memberUpdated){
-    throw new Error("Name could not be synced to workspace_members. Check Supabase RLS or run supabase_workspace_rpc_fix.sql.");
-  }
-  return true;
-}
-
-async function upsertWorkspaceMemberDisplayName(displayName){
-  const nm = String(displayName || "").trim();
-  if(!nm || !state.user?.id || !state.workspaceId) return false;
-
-  // Try SECURITY DEFINER RPCs first (works even when direct row updates are blocked by RLS).
-  const rpcTries = [
-    ["javi_set_member_display_name", { workspace_id: state.workspaceId, display_name: nm }],
-    ["javi_set_member_display_name", { p_workspace_id: state.workspaceId, p_display_name: nm }],
-    ["javi_set_member_display_name", { p_workspace_id: state.workspaceId, p_user_id: state.user.id, p_display_name: nm }],
-    ["javi_set_member_display_name", { workspace_id: state.workspaceId, user_id: state.user.id, display_name: nm }],
-    ["javi_set_profile_name", { workspace_id: state.workspaceId, display_name: nm }],
-    ["javi_set_profile_name", { p_workspace_id: state.workspaceId, p_display_name: nm }],
-  ];
-  for(const [fn,args] of rpcTries){
-    try{ await sbRpc(fn, args); return true; }catch(_){ }
-  }
-
-  // Fallbacks: direct update/upsert if schema/policies allow it.
-  const patchTries = [
-    { display_name: nm },
-    { display_name: nm, name: nm },
-    { display_name: nm, full_name: nm }
-  ];
-
-  for(const patch of patchTries){
-    try{
-      const {data, error} = await supabase
-        .from("workspace_members")
-        .update(patch)
-        .eq("workspace_id", state.workspaceId)
-        .eq("user_id", state.user.id)
-        .select("user_id");
-      if(error) throw error;
-      if(Array.isArray(data) && data.length>0) return true;
-    }catch(err){
-      if(!_isMissingColumnErr(err)) console.warn("workspace_members update failed", err);
-    }
-  }
-
-  for(const row of patchTries){
-    try{
-      const {data, error} = await supabase
-        .from("workspace_members")
-        .upsert({ workspace_id: state.workspaceId, user_id: state.user.id, role: state.workspaceRole || "member", ...row }, { onConflict:"workspace_id,user_id" })
-        .select("user_id");
-      if(error) throw error;
-      if(Array.isArray(data) && data.length>0) return true;
-    }catch(err){
-      if(!_isMissingColumnErr(err)) console.warn("workspace_members upsert failed", err);
-    }
-  }
-  return false;
 }
 
 async function fetchDisplayNamesForUserIds(userIds){
@@ -801,8 +741,15 @@ async function sbDelete(table, id){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
-  const {error} = await q;
+  const {data, error} = await q;
   if(error) throw error;
+
+  // Some legacy rows may have NULL/missing workspace_id after migration.
+  // If scoped delete removed nothing, retry by id only.
+  if(TENANT_TABLES.has(table) && (data || []).length === 0){
+    const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
+    if(retryErr) throw retryErr;
+  }
 }
 
 // --- Audit / attribution helpers (best-effort; falls back if columns don't exist) ---
@@ -1091,56 +1038,25 @@ async function fetchWorkspaceMembers(workspaceId){
   let data = null;
   let error = null;
 
-  const selectTries = [
-    "user_id, role, created_at, display_name, name, full_name, user_email, email",
-    "user_id, role, created_at, display_name, name, full_name",
-    "user_id, role, created_at, display_name",
-    "user_id, role, created_at"
-  ];
+  // Try reading display_name from workspace_members first (if column exists).
+  ({data, error} = await supabase
+    .from("workspace_members")
+    .select("user_id, role, created_at, display_name")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", {ascending:true}));
 
-  for(const sel of selectTries){
+  if(error && _isMissingColumnErr(error)){
     ({data, error} = await supabase
       .from("workspace_members")
-      .select(sel)
+      .select("user_id, role, created_at")
       .eq("workspace_id", workspaceId)
       .order("created_at", {ascending:true}));
-    if(!error) break;
-    if(!_isMissingColumnErr(error)) break;
   }
   if(error) throw error;
 
-  let rows = data || [];
-
-  // Optional RPC fallback if direct member read is constrained.
-  if(!rows.length){
-    const rpcListTries = [
-      ["javi_list_workspace_members", { workspace_id: workspaceId }],
-      ["javi_list_workspace_members", { p_workspace_id: workspaceId }],
-      ["javi_workspace_members", { workspace_id: workspaceId }],
-      ["javi_workspace_members", { p_workspace_id: workspaceId }]
-    ];
-    for(const [fn,args] of rpcListTries){
-      try{
-        const out = await sbRpc(fn, args);
-        const arr = Array.isArray(out) ? out : (out ? [out] : []);
-        if(arr.length){
-          rows = arr;
-          break;
-        }
-      }catch(_){ }
-    }
-  }
-
-  const unresolved = rows
-    .filter(r=>!pickMemberVisibleName(r))
-    .map(r=>r.user_id)
-    .filter(Boolean);
-  const nameMap = await fetchDisplayNamesForUserIds(unresolved);
-
-  return rows.map(r=>({
-    ...r,
-    display_name: pickMemberVisibleName(r) || nameMap[r.user_id] || ""
-  }));
+  const rows = data || [];
+  const nameMap = await fetchDisplayNamesForUserIds(rows.map(r=>r.user_id));
+  return rows.map(r=>({ ...r, display_name: nameMap[r.user_id] || "" }));
 }
 
 async function createInviteLink(workspaceId, role="member"){
@@ -1150,9 +1066,10 @@ async function createInviteLink(workspaceId, role="member"){
 
   // Try multiple RPC signatures so your SQL can vary slightly.
   const tries = [
-    ["javi_create_invite", { workspace_id: workspaceId, role }],
-    ["javi_create_invite", { p_workspace_id: workspaceId, p_role: role }],
-    ["javi_create_invite", { wid: workspaceId, invite_role: role }]
+    // canonical: workspace_id + optional expiry/uses
+    ["javi_create_invite", { workspace_id: workspaceId, expires_hours: 168, max_uses: 25 }],
+    // alternate param naming (if you created SQL with p_* args)
+    ["javi_create_invite", { p_workspace_id: workspaceId, p_expires_hours: 168, p_max_uses: 25 }]
   ];
 
   let lastErr = null;
@@ -1190,84 +1107,33 @@ async function createInviteLink(workspaceId, role="member"){
   return `${base}#invite=${encodeURIComponent(token)}`;
 }
 
-function buildWorkspaceDeleteHelp(err){
-  const msg = String(err?.message || err || "");
-  const code = String(err?.code || "");
-  const lower = msg.toLowerCase();
-
-  if(code === "PGRST202" || /function .*javi_delete_workspace.* does not exist/.test(lower)){
-    return "Missing Supabase RPC javi_delete_workspace. Run the workspace migration SQL that creates this function, or rely on table DELETE policies for owner.";
-  }
-  if(code === "42501" || lower.includes("row-level security") || lower.includes("permission denied")){
-    return "Supabase RLS is blocking workspace delete. Add owner DELETE policies for workspace tables or create SECURITY DEFINER RPC javi_delete_workspace.";
-  }
-  if(lower.includes("violates foreign key constraint")){
-    return "Supabase FK constraint blocked deletion. Ensure all workspace child tables are included in cascade/RPC cleanup before deleting workspaces row.";
-  }
-  return "Check Supabase SQL migration/RLS: workspace owner needs delete rights (or SECURITY DEFINER RPC) for workspace teardown.";
-}
-
 async function deleteWorkspaceAndAllData(workspaceId){
-  let rpcErr = null;
+  let lastErr = null;
   const rpcTries = [
     ["javi_delete_workspace", { workspace_id: workspaceId }],
     ["javi_delete_workspace", { p_workspace_id: workspaceId }],
-    ["javi_delete_workspace", { id: workspaceId }],
-    ["javi_delete_workspace", { workspace: workspaceId }],
-    ["javi_delete_workspace", {}]
+    ["javi_delete_workspace", { wid: workspaceId }]
   ];
   for(const [fn,args] of rpcTries){
-    try{ await sbRpc(fn,args); return; }catch(e){ rpcErr = e; }
+    try{ await sbRpc(fn,args); return; }catch(e){ lastErr = e; }
   }
 
   // Fallback: client-side cascade delete
-  const delByWorkspace = async (table, includeLegacyNull=false)=>{
-    let q = supabase.from(table).delete();
-    q = includeLegacyNull
-      ? q.or(`workspace_id.eq.${workspaceId},workspace_id.is.null`)
-      : q.eq("workspace_id", workspaceId);
-    const {error} = await q;
-    if(error){
-      const msg = String(error?.message || "");
-      // Be tolerant of optional schema differences.
-      if(/relation .* does not exist/i.test(msg) || /column .* does not exist/i.test(msg)) return;
-      throw error;
-    }
+  const del = async (table, col, val)=>{
+    const {error} = await supabase.from(table).delete().eq(col, val);
+    if(error) throw error;
   };
 
   try{
-    // Child tables first, then workspace membership + workspace row.
-    await delByWorkspace("reservations", true);
-    await delByWorkspace("checkouts", true);
-    await delByWorkspace("workspace_invites", true);
-    await delByWorkspace("kits", true);
-    await delByWorkspace("events", true);
-    await delByWorkspace("gear_items", true);
-    await delByWorkspace("workspace_members", false);
-
-    const {data: wsRows, error: wsErr} = await supabase
-      .from("workspaces")
-      .delete()
-      .eq("id", workspaceId)
-      .select("id");
-    if(wsErr) throw wsErr;
-    if(!Array.isArray(wsRows) || wsRows.length===0){
-      throw new Error("Workspace row was not deleted. Check Supabase RLS DELETE policy for workspaces.");
-    }
-  }catch(fallbackErr){
-    const parts = [
-      `Fallback failed: ${fallbackErr.message || String(fallbackErr)}`,
-      buildWorkspaceDeleteHelp(fallbackErr)
-    ];
-    const rpcMsg = String(rpcErr?.message || "");
-    if(rpcErr && !/could not find the function .*javi_delete_workspace/i.test(rpcMsg.toLowerCase())){
-      parts.push(`RPC failed: ${rpcMsg}`);
-    }
-    throw new Error(parts.join("\n"));
-  }
-
-  if(rpcErr){
-    console.warn("Workspace delete RPC failed; fallback delete succeeded", rpcErr);
+    await del("reservations", "workspace_id", workspaceId);
+    await del("checkouts", "workspace_id", workspaceId);
+    await del("kits", "workspace_id", workspaceId);
+    await del("events", "workspace_id", workspaceId);
+    await del("gear_items", "workspace_id", workspaceId);
+    await del("workspace_members", "workspace_id", workspaceId);
+    await del("workspaces", "id", workspaceId);
+  }catch(e){
+    throw lastErr || e;
   }
 }
 
@@ -1306,8 +1172,7 @@ async function renderWorkspace(view){
           saveBtn.textContent = "Saving…";
           await upsertMyDisplayName(nm);
           toast("Name updated.");
-          // Avoid full-page rerender here (it can briefly clear workspace cards on some auth update events).
-          state.displayName = nm;
+          render();
         }catch(e){
           toast(e?.message || String(e));
         }finally{
@@ -2431,6 +2296,10 @@ async function renderEventDetail(view, evt){
       el("button",{class:"btn secondary", onClick:()=>openEventModal(evt)},["Edit"]),
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm("Delete this event?")) return;
+        // Delete child rows first to avoid FK constraint failures (reservations reference events)
+        try{
+          await supabase.from("reservations").delete().eq("event_id", evt.id).eq("workspace_id", state.workspaceId);
+        }catch(e){ /* ignore */ }
         await sbDelete("events", evt.id);
         toast("Event deleted.");
         location.hash="#events";
