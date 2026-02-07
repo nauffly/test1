@@ -836,6 +836,31 @@ async function sbBulkUpdateAudit(table, matchFn, patch){
 
 
 /** ---------- Workspace (multi-tenant) helpers ---------- **/
+async function renameCurrentWorkspace(newName) {
+  if (!state.workspaceId) {
+    throw new Error("No workspace selected.");
+  }
+
+  // Only owners should rename
+  if (!canManageWorkspace()) {
+    throw new Error("Only the workspace owner can rename the workspace.");
+  }
+
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({ name: newName })
+    .eq("id", state.workspaceId)
+    .select("name")
+    .single();
+
+  if (error) throw error;
+
+  // Update local state + storage
+  state.workspaceName = data.name;
+  localStorage.setItem("javi_workspace_name", data.name);
+
+  return data.name;
+}
 const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
 
 function applyWorkspaceScope(q, includeLegacyNull=false){
