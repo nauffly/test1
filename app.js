@@ -1,3 +1,4 @@
+
 var supabase;
 // JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
@@ -1264,7 +1265,16 @@ async function leaveCurrentWorkspace(){
 
 async function renderWorkspace(view){
   if(state.workspaceMode === "legacy"){
-    location.hash = "#dashboard";
+    view.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Workspace"]),
+      el("div",{class:"muted", style:"margin-top:6px"},[
+        "Workspace management is unavailable until the workspace SQL migration is run."
+      ]),
+      el("hr",{class:"sep"}),
+      el("div",{class:"small"},[
+        "Your app is using legacy single-workspace mode so Gear, Events, and Kits remain available."
+      ])
+    ]));
     return;
   }
 
