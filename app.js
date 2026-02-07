@@ -714,23 +714,37 @@ async function ensureServiceWorker(){
 /** ---------- Supabase data helpers ---------- **/
 async function sbGetAll(table, orderBy=null){
   let q = supabase.from(table).select("*");
+  if(TENANT_TABLES.has(table)){
+    q = applyWorkspaceScope(q, false);
+  }
   if(orderBy) q = q.order(orderBy, {ascending:true});
   const {data, error} = await q;
   if(error) throw error;
   return data || [];
 }
 async function sbGetById(table, id){
-  const {data, error} = await supabase.from(table).select("*").eq("id", id).maybeSingle();
+  let q = supabase.from(table).select("*").eq("id", id);
+  if(TENANT_TABLES.has(table)){
+    q = applyWorkspaceScope(q, false);
+  }
+  const {data, error} = await q.maybeSingle();
   if(error) throw error;
   return data || null;
 }
 async function sbInsert(table, row){
-  const {data, error} = await supabase.from(table).insert(row).select("*").single();
+  const payload = (TENANT_TABLES.has(table) && !row.workspace_id)
+    ? { ...row, workspace_id: state.workspaceId }
+    : row;
+  const {data, error} = await supabase.from(table).insert(payload).select("*").single();
   if(error) throw error;
   return data;
 }
 async function sbUpdate(table, id, patch){
-  const {data, error} = await supabase.from(table).update(patch).eq("id", id).select("*").single();
+  let q = supabase.from(table).update(patch).eq("id", id);
+  if(TENANT_TABLES.has(table)){
+    q = applyWorkspaceScope(q, false);
+  }
+  const {data, error} = await q.select("*").single();
   if(error) throw error;
   return data;
 }
