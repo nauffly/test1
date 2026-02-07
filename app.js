@@ -1128,6 +1128,11 @@ async function ensureWorkspaceSelected(view){
   }
 
   if(!workspaces.length){
+    // If user arrived via an invite link, skip the create-workspace prompt.
+    // We'll accept the invite after auth, then re-run workspace selection.
+    if(hasInviteInUrl()){
+      return false;
+    }
     renderCreateWorkspace(view);
     return false;
   }
@@ -1180,6 +1185,10 @@ function parseInviteTokenFromHash(){
   return null;
 }
 
+function hasInviteInUrl(){
+  return !!parseInviteTokenFromHash();
+}
+
 function isMissingAcceptInviteRpcError(err){
   const msg = String(err?.message || err || "").toLowerCase();
   return msg.includes("javi_accept_invite") && (msg.includes("could not find the function") || msg.includes("schema cache") || msg.includes("does not exist"));
@@ -1210,7 +1219,7 @@ async function acceptInviteViaTables(token){
   }
 
   const workspaceId = invite.workspace_id || invite.p_workspace_id || invite.wid || invite.workspace;
-  const role = String(invite.role || "member").trim() || "member";
+  const role = String(invite.invite_role || invite.role || "member").trim() || "member";
   if(!workspaceId) throw new Error("Invite is missing workspace id.");
 
   const row = { workspace_id: workspaceId, user_id: state.user.id, role };
@@ -1904,9 +1913,11 @@ function renderNeedsConfig(view){
 
 async function renderAuth(view){
   const card = el("div",{class:"card", style:"max-width:520px; margin:24px auto"});
-  card.appendChild(el("h1",{},["Sign in to Javi"]));
+  card.appendChild(el("h1",{},[hasInviteInUrl() ? "Join workspace" : "Sign in to Javi"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
-    "Create events. Organize, schedule and track production gear."
+    hasInviteInUrl()
+      ? "You\'ve been invited. Create an account or sign in to join this workspace."
+      : "Create events. Organize, schedule and track production gear."
   ]));
   card.appendChild(el("hr",{class:"sep"}));
 
@@ -1920,7 +1931,9 @@ async function renderAuth(view){
       try{
         const {error} = await supabase.auth.signUp({ email: email.value.trim(), password: pass.value });
         if(error) throw error;
-        msg.textContent = "Account created. Sign in, then set your name in Workspace → Your profile.";
+        msg.textContent = hasInviteInUrl()
+          ? "Account created. Now sign in to join the workspace."
+          : "Account created. Sign in, then set your name in Workspace → Your profile.";
       }catch(e){
         msg.textContent = e.message || String(e);
       }
@@ -1932,6 +1945,8 @@ async function renderAuth(view){
         if(error) throw error;
         state.user = data?.user || state.user;
         msg.textContent = "Signed in.";
+        // Continue into the app (and accept invite if present)
+        await render();
       }catch(e){
         msg.textContent = e.message || String(e);
       }
