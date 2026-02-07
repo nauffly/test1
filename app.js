@@ -1,3 +1,4 @@
+
 var supabase;
 // JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
 /**
@@ -888,14 +889,13 @@ function applyWorkspaceScope(q, includeLegacyNull=false){
 }
 
 function syncWorkspaceNavigation(){
-  // Keep workspace entry visible in nav so users always have a stable place
-  // to understand workspace status and manage/switch when available.
+  const legacy = state.workspaceMode === "legacy";
   document.querySelectorAll('#nav a[data-route="workspace"]').forEach(a=>{
-    a.style.display = "";
+    a.style.display = legacy ? "none" : "";
   });
   const menuWorkspaceBtn = document.querySelector("#menuWorkspaceBtn");
   if(menuWorkspaceBtn){
-    menuWorkspaceBtn.style.display = "";
+    menuWorkspaceBtn.style.display = legacy ? "none" : "";
   }
 }
 
@@ -1044,28 +1044,12 @@ async function ensureWorkspaceSelected(view){
     workspaces = await fetchMyWorkspaces();
     state.workspaceMode = "multi";
   }catch(e){
-    if(isMissingWorkspaceSchemaError(e) && state.workspaceMode !== "multi"){
-      // Legacy fallback only when workspace tables/columns are truly unavailable,
-      // and only before we've ever confirmed multi-workspace mode.
-      state.workspaceMode = "legacy";
-      state.workspaceId = "legacy";
-      state.workspaceName = "Default Workspace";
-      state.workspaceRole = "owner";
-      return true;
-    }
-
-    state.workspaceMode = "multi";
-    view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Workspace unavailable"]),
-      el("div",{class:"muted", style:"margin-top:6px"},[
-        "Could not load your workspaces right now."
-      ]),
-      el("hr",{class:"sep"}),
-      el("div",{class:"small"},[
-        e?.message || String(e)
-      ])
-    ]));
-    return false;
+    // Legacy fallback: allow app usage when workspace tables are not present yet.
+    state.workspaceMode = "legacy";
+    state.workspaceId = "legacy";
+    state.workspaceName = "Default Workspace";
+    state.workspaceRole = "owner";
+    return true;
   }
 
   if(!workspaces.length){
@@ -1308,11 +1292,11 @@ async function renderWorkspace(view){
     view.appendChild(el("div",{class:"card"},[
       el("h2",{},["Workspace"]),
       el("div",{class:"muted", style:"margin-top:6px"},[
-        "Workspace features are limited until the workspace SQL migration is run."
+        "Workspace management is unavailable until the workspace SQL migration is run."
       ]),
       el("hr",{class:"sep"}),
       el("div",{class:"small"},[
-        "You can continue using Dashboard, Gear, Events, and Kits in legacy mode."
+        "Your app is using legacy single-workspace mode so Gear, Events, and Kits remain available."
       ])
     ]));
     return;
@@ -1821,8 +1805,14 @@ async function renderOnce(){
   syncWorkspaceNavigation();
   if(!workspaceReady) return;
 
+  syncWorkspaceNavigation();
+
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
+  if(state.workspaceMode === "legacy" && state.route === "workspace"){
+    state.route = "dashboard";
+    if(location.hash !== "#dashboard") location.hash = "#dashboard";
+  }
   document.querySelectorAll("#nav a").forEach(a=>{
     a.classList.toggle("active", a.dataset.route===state.route);
   });
