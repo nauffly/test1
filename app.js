@@ -888,6 +888,17 @@ function applyWorkspaceScope(q, includeLegacyNull=false){
   return q.eq("workspace_id", state.workspaceId);
 }
 
+function syncWorkspaceNavigation(){
+  const legacy = state.workspaceMode === "legacy";
+  document.querySelectorAll('#nav a[data-route="workspace"]').forEach(a=>{
+    a.style.display = legacy ? "none" : "";
+  });
+  const menuWorkspaceBtn = document.querySelector("#menuWorkspaceBtn");
+  if(menuWorkspaceBtn){
+    menuWorkspaceBtn.style.display = legacy ? "none" : "";
+  }
+}
+
 function persistWorkspaceToLocalStorage(){
   if(state.workspaceId) localStorage.setItem("javi_workspace_id", state.workspaceId);
   if(state.workspaceName) localStorage.setItem("javi_workspace_name", state.workspaceName);
@@ -1766,8 +1777,14 @@ async function renderOnce(){
   // workspace gate (multi-tenant)
   if(!(await ensureWorkspaceSelected(view))) return;
 
+  syncWorkspaceNavigation();
+
   const hash=(location.hash||"#dashboard").replace("#","");
   state.route = hash.split("/")[0] || "dashboard";
+  if(state.workspaceMode === "legacy" && state.route === "workspace"){
+    state.route = "dashboard";
+    if(location.hash !== "#dashboard") location.hash = "#dashboard";
+  }
   document.querySelectorAll("#nav a").forEach(a=>{
     a.classList.toggle("active", a.dataset.route===state.route);
   });
