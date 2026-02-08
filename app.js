@@ -2589,27 +2589,8 @@ async function openGearModal(existing=null, existingQty=null){
         preview
       ])
     ]),
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
-      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
-        e.preventDefault();
-        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
-        await sbDelete("team_members", existing.id);
-
-        // Remove from any events that reference this person
-        const events = await sbGetAll("events");
-        for(const evt of events){
-          const assignments = parseJsonArray(evt.assigned_people);
-          const next = assignments.filter(a=>a.person_id!==existing.id);
-          if(next.length !== assignments.length){
-            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          }
-        }
-        toast("Deleted team member.");
-        m.close();
-        render();
-      }},["Delete"]) : el("div",{},[""])),
-      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
-        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!name.value.trim()){ toast("Name is required."); return; }
@@ -2853,27 +2834,8 @@ async function openEventModal(existing=null){
       docs,
       el("div",{class:"small muted", style:"margin-top:6px"},["Use format: Label | https://... (opens in new tab)"])
     ]),
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
-      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
-        e.preventDefault();
-        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
-        await sbDelete("team_members", existing.id);
-
-        // Remove from any events that reference this person
-        const events = await sbGetAll("events");
-        for(const evt of events){
-          const assignments = parseJsonArray(evt.assigned_people);
-          const next = assignments.filter(a=>a.person_id!==existing.id);
-          if(next.length !== assignments.length){
-            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          }
-        }
-        toast("Deleted team member.");
-        m.close();
-        render();
-      }},["Delete"]) : el("div",{},[""])),
-      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
-        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!t.value.trim()){ toast("Title is required."); return; }
@@ -3634,23 +3596,43 @@ async function renderTeam(view){
       imgWrap.appendChild(el("div",{class:"muted teamProfileInitial"},[(m.name||"?").slice(0,1).toUpperCase()]));
     }
 
-    const callHref = m.phone ? `tel:${String(m.phone).replace(/[^\d+]/g, "")}` : "";
-    const mailHref = m.email ? `mailto:${String(m.email).trim()}` : "";
-
     const info = el("div",{class:"stack teamProfileInfo"},[
       el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
       el("div",{class:"muted small"},[m.title || "No title"]),
-      ((m.phone || m.email) ? el("div",{class:"row teamContactRow"},[
-        (m.phone ? el("a",{class:"btn secondary teamContactBtn", href:callHref},["Call"]) : null),
-        (m.email ? el("a",{class:"btn secondary teamContactBtn", href:mailHref},["Email"]) : null),
-      ]) : el("div",{class:"small muted"},["No contact info"]))
+      el("div",{class:"small muted"},[
+        [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
+      ]),
+      (m.website ? el("div",{class:"small"},[
+        el("a",{href:m.website, target:"_blank", rel:"noopener noreferrer"},["Website"])
+      ]) : null),
+      (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
     ]);
 
     card.appendChild(imgWrap);
     card.appendChild(info);
 
-    card.appendChild(el("div",{class:"teamProfileActions"},[
-      el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"])
+    if(m.notes){
+      card.appendChild(el("div",{class:"small", style:"margin-top:10px; white-space:pre-wrap"},[m.notes]));
+    }
+
+    card.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
+      el("button",{class:"btn danger", onClick:async ()=>{
+        if(!confirm(`Delete ${m.name || "this person"}?`)) return;
+        await sbDelete("team_members", m.id);
+
+        // Remove from any events that reference this person
+        const events = await sbGetAll("events");
+        for(const evt of events){
+          const assignments = parseJsonArray(evt.assigned_people);
+          const next = assignments.filter(a=>a.person_id!==m.id);
+          if(next.length !== assignments.length){
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+          }
+        }
+        toast("Deleted team member.");
+        render();
+      }},["Delete"])
     ]));
 
     list.appendChild(card);
@@ -3725,27 +3707,8 @@ async function openTeamMemberModal(existing=null){
 
     el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
 
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
-      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
-        e.preventDefault();
-        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
-        await sbDelete("team_members", existing.id);
-
-        // Remove from any events that reference this person
-        const events = await sbGetAll("events");
-        for(const evt of events){
-          const assignments = parseJsonArray(evt.assigned_people);
-          const next = assignments.filter(a=>a.person_id!==existing.id);
-          if(next.length !== assignments.length){
-            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          }
-        }
-        toast("Deleted team member.");
-        m.close();
-        render();
-      }},["Delete"]) : el("div",{},[""])),
-      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
-        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!name.value.trim()){ toast("Name is required."); return; }
@@ -3864,27 +3827,8 @@ async function openKitModal(existing=null){
     ]),
     q,
     box,
-    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
-      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
-        e.preventDefault();
-        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
-        await sbDelete("team_members", existing.id);
-
-        // Remove from any events that reference this person
-        const events = await sbGetAll("events");
-        for(const evt of events){
-          const assignments = parseJsonArray(evt.assigned_people);
-          const next = assignments.filter(a=>a.person_id!==existing.id);
-          if(next.length !== assignments.length){
-            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          }
-        }
-        toast("Deleted team member.");
-        m.close();
-        render();
-      }},["Delete"]) : el("div",{},[""])),
-      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
-        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!name.value.trim()){ toast("Kit name required."); return; }
