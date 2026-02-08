@@ -2915,8 +2915,7 @@ async function openEventModal(existing=null){
         if(!(s<en)){ toast("End must be after start."); return; }
         const nowIso=new Date().toISOString();
         const productionDocs = (docs.value || "")
-          .split(/
-+/)
+          .split(/\n+/)
           .map(line=>line.trim())
           .filter(Boolean)
           .map(line=>{
