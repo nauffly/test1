@@ -1,3 +1,4 @@
+
 /* =========================================================
    Javi — Polished UI Theme (Light + Dark)
    Drop-in replacement for your existing class names.
@@ -40,64 +41,6 @@
   --ease: cubic-bezier(.2,.8,.2,1);
   --dur: 180ms;
 }
-
-/* =========================================================
-   Team tab — Vertical “playing card” profiles (round avatar)
-   ========================================================= */
-
-/* Slightly roomier layout for the Team grid */
-.teamCardsGrid{ gap:16px; align-items:stretch; }
-
-/* Make each team card read as a vertical profile */
-.card.teamProfileCard{
-  padding:16px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  text-align:center;
-  gap:12px;
-}
-
-/* Round avatar to match event assignee chips */
-.teamProfileHeadshot{
-  width:86px;
-  height:86px;
-  border-radius:999px;
-  overflow:hidden;
-  border:1px solid var(--border);
-  background: var(--panel);
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  box-shadow: var(--shadow-xs);
-}
-
-.teamProfileInitial{
-  width:100%;
-  height:100%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-weight:900;
-  font-size:30px;
-}
-
-.teamProfileInfo{ width:100%; min-width:0; align-items:center; gap:10px; }
-.teamProfileName{ font-weight:900; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-/* Contact buttons row */
-.teamContactRow{ justify-content:center; gap:10px; flex-wrap:wrap; }
-.teamContactBtn{ padding:8px 12px; font-size:13px; }
-
-/* Actions pinned at the bottom */
-.teamProfileActions{
-  width:100%;
-  margin-top:auto;
-  padding-top:12px;
-  display:flex;
-  justify-content:center;
-  border-top:1px solid var(--border);
-  border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent);
-}
-
 
 [data-theme="dark"]{
   --bg:#0b0b10;
@@ -277,6 +220,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 
 /* ---------- Cards (soft hover elevation) ---------- */
 .card{
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 85%, transparent);
   border-radius: var(--radius-lg);
   padding:14px;
@@ -301,9 +246,9 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 }
 
 .teamProfileHeadshot{
-  width:104px;
-  height:104px;
-  border-radius:18px;
+  width:148px;
+  height:148px;
+  border-radius:22px;
   overflow:hidden;
   border:1px solid var(--border);
   flex:0 0 auto;
@@ -332,6 +277,110 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
+}
+
+
+/* ===== Team profile cards (card-like layout) ===== */
+.card.teamProfileCard{
+  padding:0;
+  overflow:hidden;
+  text-align:left;
+  align-items:stretch;
+  gap:0;
+}
+.card.teamProfileCard:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(0,0,0,.10);
+}
+
+.teamProfileHeadshot{
+  width:100%;
+  height:170px;
+  border-radius: 16px 16px 0 0;
+  border:0;
+}
+
+.teamProfileInfo{
+  padding:14px 14px 10px;
+  text-align:left;
+  align-items:flex-start;
+  gap:8px;
+}
+
+.teamContactRow{
+  justify-content:flex-start;
+}
+
+.teamProfileActions{
+  width:100%;
+  display:flex;
+  justify-content:flex-end;
+  padding:10px 14px 14px;
+  border-top:1px solid var(--border);
+  background: var(--bg);
+  border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+}
+
+/* ---------- Team profile contact buttons ---------- */
+.teamContactRow{
+  justify-content:center;
+  gap:8px;
+  flex-wrap:nowrap;
+}
+.teamContactBtn{
+  padding:7px 12px;
+  font-size:13px;
+}
+
+/* ---------- Event assignee avatars (cards + detail) ---------- */
+.eventAssigneeStrip{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:8px;
+  min-width:0;
+}
+.eventAssigneeChip{
+  width:28px;
+  height:28px;
+  border-radius:999px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  flex:0 0 auto;
+}
+.eventAssigneeInitial{
+  width:100%;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:900;
+  font-size:12px;
+}
+
+.eventAssignedHeadshot{
+  width:40px;
+  height:40px;
+  border-radius:14px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
+  border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  flex:0 0 auto;
+}
+.eventAssignedInitial{
+  width:100%;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:900;
+  font-size:14px;
 }
 
 /* ---------- Inputs ---------- */
@@ -379,6 +428,10 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   gap:10px;
   padding:12px;
   border-radius: var(--radius);
+  border:1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  align-items:flex-start;
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: var(--surface-1);
   transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease);
@@ -386,9 +439,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 
 .listItem:hover{
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-  background: var(--surface-2);
-  border-color: color-mix(in srgb, var(--border) 95%, transparent);
+  box-shadow: var(--shadow-md);
+  border-color: color-mix(in srgb, var(--border) 92%, transparent);
 }
 
 .stack{display:flex; flex-direction:column; gap:6px}
@@ -489,6 +541,8 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   font-size:12px;
   padding:5px 8px;
   border-radius: 12px;
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   white-space:nowrap;
@@ -847,4 +901,106 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
     flex-wrap: wrap !important;
   }
   .card .btn{ width: auto; }
+}
+
+
+/* ===== Team cards: vertical playing-card style with round avatar (matches Events) ===== */
+.teamCardsGrid{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap:14px;
+}
+@media (min-width: 920px){
+  .teamCardsGrid{ grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+}
+
+/* Override earlier banner-style team cards */
+.card.teamProfileCard{
+  padding:14px;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  gap:10px;
+}
+.card.teamProfileCard:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Round avatar */
+.teamProfileHeadshot{
+  width:72px;
+  height:72px;
+  border-radius:999px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
+  flex:0 0 auto;
+  margin-top:2px;
+}
+
+/* Initial inside avatar */
+.teamProfileInitial{
+  width:100%;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:900;
+  font-size:18px;
+}
+
+.teamProfileInfo{
+  width:100%;
+  min-width:0;
+  align-items:center;
+  text-align:center;
+  padding:0;
+  gap:6px;
+}
+
+.teamProfileName{
+  font-weight:900;
+  width:100%;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.teamContactRow{
+  width:100%;
+  justify-content:center;
+  gap:10px;
+  margin-top:2px;
+}
+
+.teamContactBtn{
+  width:100%;
+  justify-content:center;
+  padding:9px 12px;
+  font-size:13px;
+}
+
+/* Actions pinned to bottom */
+.teamProfileActions{
+  width:100%;
+  display:flex;
+  margin-top:auto;
+  padding-top:10px;
+  border-top:1px solid var(--border);
+  justify-content:center;
+  background: transparent;
+}
+.teamProfileActions .btn{
+  width:100%;
+}
+
+/* Mobile: keep them card-like and tappable */
+@media (max-width: 560px){
+  .teamCardsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; }
+  .card.teamProfileCard{ padding:12px; }
+  .teamProfileHeadshot{ width:64px; height:64px; }
+  .teamContactRow{ flex-direction:column; gap:8px; }
 }
