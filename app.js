@@ -3558,25 +3558,15 @@ async function renderTeam(view){
 
     const info = el("div",{class:"stack teamProfileInfo"},[
       el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
-      el("div",{class:"muted small"},[m.title || "No title"])
+      el("div",{class:"muted small"},[m.title || "No title"]),
+      el("div",{class:"small muted"},[
+        [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
+      ]),
+      (m.website ? el("div",{class:"small"},[
+        el("a",{href:m.website, target:"_blank", rel:"noopener noreferrer"},["Website"])
+      ]) : null),
+      (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
     ]);
-
-    const phoneRaw = (m.phone || "").trim();
-    const emailRaw = (m.email || "").trim();
-
-    if(phoneRaw){
-      const phoneHref = `tel:${phoneRaw.replace(/[^\d+]/g, "")}`;
-      info.appendChild(el("div",{class:"small muted teamContactValue"},[phoneRaw]));
-      info.appendChild(el("a",{class:"btn secondary teamContactBtn", href:phoneHref},["Call"]));
-    }
-
-    if(emailRaw){
-      info.appendChild(el("div",{class:"small muted teamContactValue"},[emailRaw]));
-    }
-
-    if(!phoneRaw && !emailRaw){
-      info.appendChild(el("div",{class:"small muted"},["No contact info"]));
-    }
 
     card.appendChild(imgWrap);
     card.appendChild(info);
