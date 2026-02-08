@@ -1,6 +1,6 @@
 
 var supabase;
-// JAVI_BUILD: 2026-02-07-audit-creator-checkout-v1
+// JAVI_BUILD: 2026-02-07-team-cards-v1
 /**
  * Javi (Online-first) — Supabase-backed static app
  * - Requires you to fill config.js with SUPABASE_URL + SUPABASE_ANON_KEY
@@ -683,6 +683,17 @@ function isRlsDeniedErr(e){
   return msg.includes("row level security") || msg.includes("rls") || msg.includes("permission denied") || msg.includes("not allowed");
 }
 
+function isMissingWorkspaceIdColumnErr(e){
+  const msg=_errMsg(e).toLowerCase();
+  return isMissingColumnErr(e) && msg.includes("workspace_id");
+}
+function stripWorkspaceId(obj){
+  if(!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+  const o = {...obj};
+  delete o.workspace_id;
+  return o;
+}
+
 async function getTeamMembersSafe({allowMissing=false}={}){
   try{
     return await sbGetAll("team_members", "name");
@@ -788,9 +799,23 @@ async function sbGetAll(table, orderBy=null){
   }
   if(orderBy) q = q.order(orderBy, {ascending:true});
   const {data, error} = await q;
-  if(error) throw error;
+  if(error){
+    // If a tenant table hasn't been migrated (no workspace_id column yet), fall back gracefully.
+    if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy" && isMissingWorkspaceIdColumnErr(error)){
+      if(table === "team_members"){
+        state.teamTableNoWorkspaceColumn = true;
+        let q2 = supabase.from(table).select("*");
+        if(orderBy) q2 = q2.order(orderBy, {ascending:true});
+        const {data: d2, error: e2} = await q2;
+        if(e2) throw e2;
+        return d2 || [];
+      }
+    }
+    throw error;
+  }
   return data || [];
 }
+
 async function sbGetById(table, id){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).select("*").eq("id", id);
@@ -811,10 +836,22 @@ async function sbInsert(table, row){
       if(row.workspace_id == null) row = {...row, workspace_id: state.workspaceId};
     }
   }
-  const {data, error} = await supabase.from(table).insert(row).select("*").single();
-  if(error) throw error;
-  return data;
+  try{
+    const {data, error} = await supabase.from(table).insert(row).select("*").single();
+    if(error) throw error;
+    return data;
+  }catch(err){
+    // team_members might not have workspace_id yet (partial migration). Retry without workspace_id.
+    if(table === "team_members" && state.workspaceMode !== "legacy" && isMissingWorkspaceIdColumnErr(err)){
+      state.teamTableNoWorkspaceColumn = true;
+      const {data, error} = await supabase.from(table).insert(stripWorkspaceId(row)).select("*").single();
+      if(error) throw error;
+      return data;
+    }
+    throw err;
+  }
 }
+
 async function sbUpdate(table, id, patch){
   // Enforce tenant isolation for workspace-scoped tables.
   let q = supabase.from(table).update(patch).eq("id", id);
@@ -822,10 +859,22 @@ async function sbUpdate(table, id, patch){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.eq("workspace_id", state.workspaceId);
   }
-  const {data, error} = await q.select("*").single();
-  if(error) throw error;
-  return data;
+  try{
+    const {data, error} = await q.select("*").single();
+    if(error) throw error;
+    return data;
+  }catch(err){
+    // team_members might not have workspace_id yet (partial migration). Retry by id only.
+    if(table === "team_members" && state.workspaceMode !== "legacy" && isMissingWorkspaceIdColumnErr(err)){
+      state.teamTableNoWorkspaceColumn = true;
+      const {data, error} = await supabase.from(table).update(stripWorkspaceId(patch)).eq("id", id).select("*").single();
+      if(error) throw error;
+      return data;
+    }
+    throw err;
+  }
 }
+
 async function sbDelete(table, id){
   // Keep tenant isolation while still supporting legacy rows with NULL workspace_id.
   let q = supabase.from(table).delete().eq("id", id);
@@ -833,16 +882,28 @@ async function sbDelete(table, id){
     if(!state.workspaceId) throw new Error("No workspace selected.");
     q = q.or(`workspace_id.eq.${state.workspaceId},workspace_id.is.null`);
   }
-  const {data, error} = await q;
-  if(error) throw error;
+  try{
+    const {data, error} = await q;
+    if(error) throw error;
 
-  // Some legacy rows may have NULL/missing workspace_id after migration.
-  // If scoped delete removed nothing, retry by id only.
-  if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy" && (data || []).length === 0){
-    const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
-    if(retryErr) throw retryErr;
+    // Some legacy rows may have NULL/missing workspace_id after migration.
+    // If scoped delete removed nothing, retry by id only.
+    if(TENANT_TABLES.has(table) && state.workspaceMode !== "legacy" && (data || []).length === 0){
+      const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
+      if(retryErr) throw retryErr;
+    }
+  }catch(err){
+    // team_members might not have workspace_id yet (partial migration). Retry by id only.
+    if(table === "team_members" && state.workspaceMode !== "legacy" && isMissingWorkspaceIdColumnErr(err)){
+      state.teamTableNoWorkspaceColumn = true;
+      const {error: retryErr} = await supabase.from(table).delete().eq("id", id);
+      if(retryErr) throw retryErr;
+      return;
+    }
+    throw err;
   }
 }
+
 
 // --- Audit / attribution helpers (best-effort; falls back if columns don't exist) ---
 const AUDIT_KEYS = new Set([
@@ -3406,18 +3467,40 @@ async function renderKits(view){
 
 
 async function renderTeam(view){
-  const members = (await sbGetAll("team_members", "name")).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  let members = null;
+  try{
+    members = await getTeamMembersSafe({allowMissing:true});
+  }catch(err){
+    console.error(err);
+    toast(err?.message || String(err));
+    members = [];
+  }
 
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
       el("h1",{},["Team"]),
-      el("div",{class:"muted small"},["Create people and keep crew/actor/contact details in one place."])
+      el("div",{class:"muted small"},[
+        "Create people (cast, crew, vendors) and assign them to events. ",
+        (state.teamTableNoWorkspaceColumn ? "Note: Team table isn’t workspace-scoped yet; showing legacy rows." : "")
+      ])
     ]),
     el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal()},["Add person"])
   ]));
 
   const list = el("div",{class:"grid two"});
   view.appendChild(list);
+
+  if(members === null){
+    list.appendChild(el("div",{class:"card"},[
+      el("div",{style:"font-weight:800"},["Team isn’t set up in Supabase yet."]),
+      el("div",{class:"muted small", style:"margin-top:6px"},[
+        "Run the latest SQL migration that creates the team_members table, then refresh."
+      ])
+    ]));
+    return;
+  }
+
+  members = (members || []).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
 
   if(!members.length){
     list.appendChild(el("div",{class:"card"},["No team members yet."]));
@@ -3426,22 +3509,46 @@ async function renderTeam(view){
 
   for(const m of members){
     const card = el("div",{class:"card"});
-    card.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start"},[
-      el("div",{class:"stack"},[
-        el("div",{style:"font-weight:800"},[m.name || "Unnamed"]),
-        el("div",{class:"muted small"},[m.title || "No title"]),
-        el("div",{class:"small muted"},[[m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"]),
-        (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
-      ])
-    ]));
-    if(m.notes){
-      card.appendChild(el("div",{class:"small", style:"margin-top:8px; white-space:pre-wrap"},[m.notes]));
+
+    const top = el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start; gap:12px"},[]);
+    const left = el("div",{class:"row", style:"gap:12px; align-items:flex-start; min-width:0"},[]);
+
+    const imgWrap = el("div",{style:"width:56px; height:56px; border-radius:14px; overflow:hidden; border:1px solid var(--border); flex:0 0 auto; background:color-mix(in srgb, var(--bg) 86%, transparent)"},[]);
+    if(m.headshot_url){
+      imgWrap.appendChild(el("img",{src:m.headshot_url, alt:m.name||"Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+    } else {
+      imgWrap.appendChild(el("div",{class:"muted", style:"width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-weight:800"},[(m.name||"?").slice(0,1).toUpperCase()]));
     }
+
+    const info = el("div",{class:"stack", style:"min-width:0"},[
+      el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[m.name || "Unnamed"]),
+      el("div",{class:"muted small"},[m.title || "No title"]),
+      el("div",{class:"small muted"},[
+        [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
+      ]),
+      (m.website ? el("div",{class:"small"},[
+        el("a",{href:m.website, target:"_blank", rel:"noopener noreferrer"},["Website"])
+      ]) : null),
+      (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
+    ]);
+
+    left.appendChild(imgWrap);
+    left.appendChild(info);
+
+    top.appendChild(left);
+    card.appendChild(top);
+
+    if(m.notes){
+      card.appendChild(el("div",{class:"small", style:"margin-top:10px; white-space:pre-wrap"},[m.notes]));
+    }
+
     card.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
       el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm(`Delete ${m.name || "this person"}?`)) return;
         await sbDelete("team_members", m.id);
+
+        // Remove from any events that reference this person
         const events = await sbGetAll("events");
         for(const evt of events){
           const assignments = parseJsonArray(evt.assigned_people);
@@ -3454,19 +3561,40 @@ async function renderTeam(view){
         render();
       }},["Delete"])
     ]));
+
     list.appendChild(card);
   }
 }
 
 async function openTeamMemberModal(existing=null){
   const isEdit = !!existing;
+
+  const headshotUrl = el("input",{class:"input", placeholder:"Headshot URL (optional)", value: existing?.headshot_url || ""});
   const name = el("input",{class:"input", placeholder:"Name", value: existing?.name || ""});
-  const title = el("input",{class:"input", placeholder:"Title", value: existing?.title || ""});
+  const title = el("input",{class:"input", placeholder:"Title (e.g., Director, Gaffer, Actor)", value: existing?.title || ""});
   const defaultRole = el("input",{class:"input", placeholder:"Default role (Crew, Actor, etc.)", value: existing?.default_role || ""});
+
   const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
   const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
-  const notes = el("textarea",{class:"textarea", placeholder:"Notes"});
+  const website = el("input",{class:"input", placeholder:"Website (optional)", value: existing?.website || ""});
+  const instagram = el("input",{class:"input", placeholder:"Instagram (optional)", value: existing?.instagram || ""});
+
+  const notes = el("textarea",{class:"textarea", placeholder:"Notes (rates, availability, address, etc.)"});
   notes.value = existing?.notes || "";
+
+  const preview = el("div",{style:"width:72px; height:72px; border-radius:16px; overflow:hidden; border:1px solid var(--border); background:color-mix(in srgb, var(--bg) 86%, transparent)"},[]);
+  const repaintPreview = ()=>{
+    preview.innerHTML = "";
+    const url = headshotUrl.value.trim();
+    if(url){
+      preview.appendChild(el("img",{src:url, alt:"Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+    } else {
+      preview.appendChild(el("div",{class:"muted", style:"width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-weight:800"},[(name.value.trim()||"?").slice(0,1).toUpperCase()]));
+    }
+  };
+  headshotUrl.addEventListener("input", repaintPreview);
+  name.addEventListener("input", repaintPreview);
+  repaintPreview();
 
   const m = modal(el("div",{},[
     el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
@@ -3474,39 +3602,88 @@ async function openTeamMemberModal(existing=null){
       el("span",{class:"badge"},[isEdit?"Update":"Create"])
     ]),
     el("hr",{class:"sep"}),
-    el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
-      el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
-      el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
-      el("div",{},[el("label",{class:"small muted"},["Default role"]), defaultRole]),
-      el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
-      el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
+
+    el("div",{class:"row", style:"gap:12px; align-items:flex-start"},[
+      preview,
+      el("div",{class:"stack", style:"flex:1; gap:10px"},[
+        el("div",{},[el("label",{class:"small muted"},["Headshot URL"]), headshotUrl]),
+        el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
+          el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
+          el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
+          el("div",{},[el("label",{class:"small muted"},["Default role"]), defaultRole]),
+          el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
+          el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
+          el("div",{},[el("label",{class:"small muted"},["Website"]), website]),
+          el("div",{},[el("label",{class:"small muted"},["Instagram"]), instagram]),
+        ])
+      ])
     ]),
+
     el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
+
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!name.value.trim()){ toast("Name is required."); return; }
+
         const nowIso = new Date().toISOString();
-        const row = {
+        const fullRow = {
+          headshot_url: headshotUrl.value.trim() || null,
           name: name.value.trim(),
           title: title.value.trim(),
           default_role: defaultRole.value.trim(),
           phone: phone.value.trim(),
           email: email.value.trim(),
+          website: website.value.trim(),
+          instagram: instagram.value.trim(),
           notes: notes.value.trim(),
           updated_at: nowIso
         };
-        if(isEdit){
-          await sbUpdate("team_members", existing.id, row);
-          toast("Updated person.");
-        } else {
-          row.created_at = nowIso;
-          await sbInsert("team_members", row);
-          toast("Added person.");
+
+        // Minimal columns fallback (in case DB isn't updated with the new fields yet)
+        const minimalRow = {
+          name: fullRow.name,
+          title: fullRow.title,
+          default_role: fullRow.default_role,
+          phone: fullRow.phone,
+          email: fullRow.email,
+          notes: fullRow.notes,
+          updated_at: nowIso
+        };
+
+        try{
+          if(isEdit){
+            await sbUpdate("team_members", existing.id, fullRow);
+            toast("Updated person.");
+          } else {
+            fullRow.created_at = nowIso;
+            await sbInsert("team_members", fullRow);
+            toast("Added person.");
+          }
+          m.close();
+          render();
+        }catch(err){
+          // If extra columns don't exist yet, retry with minimal columns.
+          if(isMissingColumnErr(err)){
+            try{
+              if(isEdit){
+                await sbUpdate("team_members", existing.id, minimalRow);
+                toast("Updated person (some fields couldn’t be saved until your team table is updated).");
+              } else {
+                minimalRow.created_at = nowIso;
+                await sbInsert("team_members", minimalRow);
+                toast("Added person (some fields couldn’t be saved until your team table is updated).");
+              }
+              m.close();
+              render();
+              return;
+            }catch(_e2){
+              // fall through to original error
+            }
+          }
+          toast(err?.message || String(err));
         }
-        m.close();
-        render();
       }},[isEdit?"Save":"Create"])
     ])
   ]));
