@@ -236,6 +236,32 @@ function ensureLocationAutocompleteStyles(){
     }
     .locSuggestItem:hover{ background: color-mix(in srgb, var(--card) 72%, var(--bg)); }
     .locSuggestMeta{ display:block; opacity:.68; font-size:12px; margin-top:2px; }
+
+.locPreview{
+  margin-top:10px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  overflow:hidden;
+  background: color-mix(in srgb, var(--bg) 92%, #0000);
+}
+.locPreview img{ display:block; width:100%; height:auto; }
+.locPreviewBar{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:flex-end;
+  padding:10px;
+}
+.locOpenBtn{
+  border:1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 92%, #0000);
+  color: var(--text);
+  border-radius:12px;
+  padding:8px 12px;
+  font-weight:800;
+  text-decoration:none;
+}
+.locOpenBtn:hover{ filter:brightness(1.03); }
   `;
   document.head.appendChild(st);
 }
@@ -273,13 +299,50 @@ async function nominatimSearch(q){
     const json = await res.json();
     const out = Array.isArray(json) ? json.map(r=>({
       label: r.display_name,
-      address: r.address || null
+      address: r.address || null,
+      lat: (r.lat!=null ? parseFloat(r.lat) : null),
+      lng: (r.lon!=null ? parseFloat(r.lon) : null),
+      osm_type: r.osm_type || null,
+      osm_id: r.osm_id || null
     })) : [];
     __locAutoCache.set(query, out);
     return out;
   }catch(e){
     return [];
   }
+
+
+// --- Location storage + maps helpers ---
+function __eventLocKey(eventId){ return "javi_evt_loc_" + String(eventId||""); }
+function storeEventLatLng(eventId, lat, lng){
+  try{
+    if(!eventId) return;
+    if(lat==null || lng==null || isNaN(lat) || isNaN(lng)) return;
+    localStorage.setItem(__eventLocKey(eventId), JSON.stringify({lat:+lat, lng:+lng, ts:Date.now()}));
+  }catch(_e){}
+}
+function loadEventLatLng(eventId){
+  try{
+    const raw = localStorage.getItem(__eventLocKey(eventId));
+    if(!raw) return null;
+    const o = JSON.parse(raw);
+    if(!o || o.lat==null || o.lng==null) return null;
+    return {lat:+o.lat, lng:+o.lng};
+  }catch(_e){ return null; }
+}
+function mapsSearchUrl({lat,lng, address}){
+  const a = String(address||"").trim();
+  if(lat!=null && lng!=null && !isNaN(lat) && !isNaN(lng)){
+    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(lat + "," + lng);
+  }
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a);
+}
+function osmStaticMapUrl(lat,lng){
+  const center = encodeURIComponent(lat + "," + lng);
+  return "https://staticmap.openstreetmap.de/staticmap.php?center=" + center +
+         "&zoom=15&size=680x320&maptype=mapnik&markers=" + center + ",red-pushpin";
+}
+
 }
 
 function attachLocationAutocomplete(inputEl){
@@ -302,8 +365,30 @@ function attachLocationAutocomplete(inputEl){
 
   inputEl.__locAutoAttached = true;
   wrap.classList.add("locAutoWrap");
-  const list = el("div", { class:"locSuggestList" });
-  wrap.appendChild(list);
+
+const list = el("div", { class:"locSuggestList" });
+wrap.appendChild(list);
+
+// Map preview (best-effort, no key)
+const preview = el("div",{class:"locPreview", style:"display:none;"},[]);
+const previewImg = el("img",{alt:"Map preview"});
+const previewBar = el("div",{class:"locPreviewBar"},[]);
+const openBtn = el("a",{class:"locOpenBtn", target:"_blank", rel:"noopener noreferrer"},["Open in Maps"]);
+previewBar.appendChild(openBtn);
+preview.appendChild(previewImg);
+preview.appendChild(previewBar);
+wrap.appendChild(preview);
+
+const setPreview = (lat,lng,label)=>{
+  if(lat==null || lng==null || isNaN(lat) || isNaN(lng)){
+    preview.style.display="none";
+    return;
+  }
+  previewImg.src = osmStaticMapUrl(lat,lng);
+  openBtn.href = mapsSearchUrl({lat,lng,address:label||inputEl.value});
+  preview.style.display="block";
+};
+
 
   const closeList = ()=>{ list.style.display="none"; list.innerHTML=""; };
   const openList = ()=>{ if(list.innerHTML.trim()) list.style.display="block"; };
@@ -318,6 +403,9 @@ function attachLocationAutocomplete(inputEl){
       ]);
       btn.addEventListener("click", ()=>{
         inputEl.value = main;
+        inputEl.__locLat = (it.lat!=null ? +it.lat : null);
+        inputEl.__locLng = (it.lng!=null ? +it.lng : null);
+        setPreview(inputEl.__locLat, inputEl.__locLng, main);
         closeList();
         inputEl.dispatchEvent(new Event("input", { bubbles:true }));
         inputEl.focus();
@@ -334,6 +422,11 @@ function attachLocationAutocomplete(inputEl){
   }, 220);
 
   inputEl.addEventListener("input", ()=>{
+    // manual typing clears previously selected coords
+    inputEl.__locLat = null;
+    inputEl.__locLng = null;
+    setPreview(null,null,null);
+
     const q = String(inputEl.value||"").trim();
     if(q.length < 3){ closeList(); return; }
     doSearch();
@@ -341,6 +434,9 @@ function attachLocationAutocomplete(inputEl){
 
   inputEl.addEventListener("focus", ()=>{
     const q = String(inputEl.value||"").trim();
+    if(inputEl.__locLat!=null && inputEl.__locLng!=null){
+      setPreview(inputEl.__locLat, inputEl.__locLng, q);
+    }
     if(q.length >= 3) doSearch();
     else openList();
   });
@@ -573,7 +669,18 @@ function setupHeaderUX(){
         .eventDateHero{ padding:12px 12px; }
         .eventDateHeroDate{ font-size:17px; }
       }
-    `;
+    
+.locOpenBtn{
+  border:1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 92%, #0000);
+  color: var(--text);
+  border-radius:12px;
+  padding:8px 12px;
+  font-weight:800;
+  text-decoration:none;
+}
+.locOpenBtn:hover{ filter:brightness(1.03); }
+`;
     document.head.appendChild(st2);
   }
   // Also force-show on small screens via JS (in case CSS/media query is weird)
@@ -636,7 +743,21 @@ function renderEventDateHero(evt){
   const body = el("div",{style:"flex:1"});
   body.appendChild(el("div",{class:"eventDateHeroDate"},[dateText]));
   if(timeText) body.appendChild(el("div",{class:"eventDateHeroTime"},[timeText]));
-  if(evt?.location) body.appendChild(el("div",{class:"eventDateHeroLoc"},[evt.location]));
+
+const ll = (evt && (evt.location_lat!=null || evt.location_lng!=null)) ? {lat:+evt.location_lat, lng:+evt.location_lng} : loadEventLatLng(evt?.id);
+if(evt?.location){
+  const row = el("div",{class:"eventDateHeroLoc"},[evt.location]);
+  // One-tap maps
+  const a = el("a",{class:"locOpenBtn", href: mapsSearchUrl({lat: ll?.lat, lng: ll?.lng, address: evt.location}), target:"_blank", rel:"noopener noreferrer", style:"margin-top:8px; display:inline-block;"},["Open in Maps"]);
+  body.appendChild(row);
+  body.appendChild(a);
+  // Map preview (if we have coords)
+  if(ll && ll.lat!=null && ll.lng!=null && !isNaN(ll.lat) && !isNaN(ll.lng)){
+    const img = el("img",{src: osmStaticMapUrl(ll.lat,ll.lng), alt:"Map preview", style:"margin-top:10px; border-radius:14px; border:1px solid var(--border); width:100%; height:auto;"});
+    body.appendChild(img);
+  }
+}
+
   wrap.appendChild(body);
   return wrap;
 }
@@ -1222,6 +1343,20 @@ const AUDIT_KEYS = new Set([
 function _isMissingColumnErr(err){
   const msg = String(err?.message || err || "");
   return /column .* does not exist/i.test(msg) || /Could not find the/i.test(msg);
+}
+
+function _errMsg(err){ return String(err?.message || err || ""); }
+function isMissingColumnNamed(err, col){
+  const msg = _errMsg(err);
+  return _isMissingColumnErr(err) && new RegExp(`\b${col}\b`, "i").test(msg);
+}
+function isMissingProductionDocsColumnErr(err){ return isMissingColumnNamed(err, "production_docs"); }
+function isProductionDocsTypeErr(err){
+  const msg = _errMsg(err);
+  return /invalid input syntax/i.test(msg) || /JSON/i.test(msg) || /cannot cast/i.test(msg);
+}
+function isMissingLocationLatLngColumnsErr(err){
+  return isMissingColumnNamed(err, "location_lat") || isMissingColumnNamed(err, "location_lng");
 }
 function _stripAudit(obj){
   const o = {...obj};
@@ -3349,6 +3484,8 @@ async function openEventModal(existing=null){
           start_at: s.toISOString(),
           end_at: en.toISOString(),
           location: loc.value.trim(),
+          location_lat: (loc.__locLat!=null ? +loc.__locLat : null),
+          location_lng: (loc.__locLng!=null ? +loc.__locLng : null),
           notes: notes.value.trim(),
           production_docs: productionDocs,
           updated_at: nowIso
@@ -3377,7 +3514,12 @@ async function openEventModal(existing=null){
             try{
               obj = await sbUpdate("events", existing.id, row);
             }catch(e){
-              if(isMissingProductionDocsColumnErr(e)){
+              if(isMissingLocationLatLngColumnsErr(e)){
+                const rowNoLL = { ...row };
+                delete rowNoLL.location_lat;
+                delete rowNoLL.location_lng;
+                obj = await sbUpdate("events", existing.id, rowNoLL);
+              }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
                 delete rowNoDocs.production_docs;
                 obj = await sbUpdate("events", existing.id, rowNoDocs);
@@ -3396,6 +3538,7 @@ async function openEventModal(existing=null){
               .eq("status","ACTIVE");
             if(upErr) throw upErr;
 
+            try{ storeEventLatLng(existing.id, row.location_lat, row.location_lng); }catch(_e){}
             toast("Updated event.");
           } else {
             row.created_at = nowIso;
@@ -3405,7 +3548,12 @@ async function openEventModal(existing=null){
             try{
               obj = await sbInsertAudit("events", row);
             }catch(e){
-              if(isMissingProductionDocsColumnErr(e)){
+              if(isMissingLocationLatLngColumnsErr(e)){
+                const rowNoLL = { ...row };
+                delete rowNoLL.location_lat;
+                delete rowNoLL.location_lng;
+                obj = await sbInsertAudit("events", rowNoLL);
+              }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
                 delete rowNoDocs.production_docs;
                 obj = await sbInsertAudit("events", rowNoDocs);
@@ -3415,6 +3563,7 @@ async function openEventModal(existing=null){
                 throw e;
               }
             }
+            try{ storeEventLatLng(obj.id, row.location_lat, row.location_lng); }catch(_e){}
             toast("Created event.");
           }
           m.close();
