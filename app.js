@@ -359,7 +359,55 @@ function setupHeaderUX(){
         #settingsWrap{ display:none !important; }
         #hamburgerBtn{ display:inline-flex !important; }
       }
-    `;
+    
+      /* ===== Gear tiles (grid) ===== */
+      .gearGrid{
+        display:grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap:12px;
+      }
+      .gearTile{
+        display:flex;
+        flex-direction:column;
+        text-align:left;
+        padding:0;
+        border:1px solid var(--border);
+        border-radius:16px;
+        background: color-mix(in srgb, var(--panel) 92%, transparent);
+        box-shadow: 0 10px 28px rgba(0,0,0,.06);
+        overflow:hidden;
+        cursor:pointer;
+      }
+      .gearTile:hover{ transform: translateY(-1px); }
+      .gearTile:active{ transform: translateY(0px); }
+      .gearTileMedia{ height:110px; background: color-mix(in srgb, var(--bg) 90%, transparent); display:flex; align-items:center; justify-content:center; }
+      .gearTileImg{
+        width:100%;
+        height:110px;
+        object-fit:cover;
+        display:block;
+      }
+      .gearTileImgPlaceholder{
+        width:56px;
+        height:56px;
+        border-radius:14px;
+        border:1px dashed var(--border);
+        background: color-mix(in srgb, var(--panel) 90%, transparent);
+      }
+      .gearTileBody{ padding:12px; display:flex; flex-direction:column; gap:6px; min-height:92px; }
+      .gearTileTitle{ font-weight:800; line-height:1.15; }
+      .gearTileBadge{
+        display:inline-flex;
+        align-self:flex-start;
+        padding:4px 8px;
+        border-radius:999px;
+        font-size:12px;
+        border:1px solid var(--border);
+        background: color-mix(in srgb, var(--bg) 92%, transparent);
+      }
+      .gearTileMeta{ font-size:12px; color: var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+`;
     document.head.appendChild(st);
   }
 
@@ -2663,7 +2711,7 @@ async function renderGear(view){
   filterCard.appendChild(el("div",{class:"grid", style:"grid-template-columns: 1fr 220px; gap:10px"},[q, cat]));
   view.appendChild(filterCard);
 
-  const list=el("div",{class:"grid"});
+  const list=el("div",{class:"gearGrid"});
   view.appendChild(list);
 
   function refresh(){
@@ -2681,69 +2729,25 @@ async function renderGear(view){
     }
     for(const gr of items){
       const it = gr.primary;
-      const qtyBadge = gr.qty > 1 ? el("span",{class:"badge"},[`${gr.category} • x${gr.qty}`]) : el("span",{class:"badge"},[it.category]);
-      const thumb = it.image_url ? el("img",{src:it.image_url, style:"width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid var(--border)"}) : el("div",{style:"width:44px;height:44px;border-radius:10px;border:1px solid var(--border);background:color-mix(in srgb, var(--panel) 92%, transparent)"},[]);
-      list.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"row", style:"gap:10px; align-items:flex-start"},[
-          thumb,
-          el("div",{class:"stack"},[
-            el("div",{style:"font-weight:700"},[gr.qty>1 ? `${gr.name} (x${gr.qty})` : gr.name]),
-            el("div",{class:"kv"},[it.description || "—"]),
-            el("div",{class:"kv"},[
-              it.asset_tag ? `Tag: ${it.asset_tag}` : "No tag",
-              it.serial ? ` • S/N: ${it.serial}` : "",
-              it.location ? ` • Location: ${it.location}` : ""
-            ].join(""))
-          ])
-        ]),
-        el("div",{class:"stack", style:"align-items:flex-end"},[
-          qtyBadge,
-          el("button",{class:"btn secondary", onClick:()=>openGearModal(it, gr.qty)},["Edit"]),
-          el("button",{class:"btn danger", onClick:async ()=>{
-            try{
-              const msg = gr.qty>1 ? `Delete "${gr.name}" and its ${gr.qty} copies?` : `Delete "${gr.name}"?`;
-              if(!confirm(msg)) return;
+      const badgeText = gr.qty > 1 ? `${gr.category} • x${gr.qty}` : it.category;
+      const thumb = it.image_url
+        ? el("img",{src:it.image_url, class:"gearTileImg"})
+        : el("div",{class:"gearTileImgPlaceholder"},[]);
 
-              // Prevent deleting gear that is currently reserved/checked out
-              const ids = gr.items.map(x=>x.id);
-              const { data: resv, error: resvErr } = await supabase
-                .from("reservations")
-                .select("id, status")
-                .in("gear_item_id", ids);
-              if(resvErr) throw resvErr;
-
-              const active = (resv||[]).filter(r=>{
-                const st = (r.status||"").toUpperCase();
-                return !["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st);
-              });
-              if(active.length){
-                alert(`Can't delete "${gr.name}" because ${active.length} reservation(s) still reference it. Remove it from events first.`);
-                return;
-              }
-
-              // delete all items in group
-              for(const gi of gr.items){
-                await sbDelete("gear_items", gi.id);
-              }
-
-              // remove from kits (array) best-effort
-              const kits = await sbGetAll("kits");
-              for(const k of kits){
-                const next = (k.item_ids||[]).filter(x=>!gr.items.some(gi=>gi.id===x));
-                if(next.length !== (k.item_ids||[]).length){
-                  await sbUpdate("kits", k.id, { item_ids: next, updated_at: new Date().toISOString() });
-                }
-              }
-
-              toast("Deleted gear.");
-              render();
-            }catch(e){
-              console.error(e);
-              toast(e.message || "Delete failed.");
-            }
-          }},["Delete"])
+      // Square/tile card (click to edit)
+      const tile = el("button",{class:"gearTile", onClick:()=>openGearModal(gr)},[
+        el("div",{class:"gearTileMedia"},[thumb]),
+        el("div",{class:"gearTileBody"},[
+          el("div",{class:"gearTileTitle"},[gr.qty>1 ? `${gr.name}` : gr.name]),
+          el("div",{class:"gearTileBadge"},[badgeText]),
+          el("div",{class:"gearTileMeta"},[
+            (it.location ? it.location : "—"),
+            (it.asset_tag ? ` • ${it.asset_tag}` : "")
+          ].join(""))
         ])
-      ]));
+      ]);
+
+      list.appendChild(tile);
     }
   }
 
@@ -2752,8 +2756,10 @@ async function renderGear(view){
   refresh();
 }
 
-async function openGearModal(existing=null, existingQty=null){
-  const isEdit=!!existing;
+async function openGearModal(existingGroup=null){
+  const isEdit=!!existingGroup;
+  const existing = existingGroup?.primary || null;
+  const existingQty = existingGroup?.qty || 1;
 
   const name=el("input",{class:"input", placeholder:"Name (e.g., Sony FX3)", value: existing?.name || ""});
   const qty=el("input",{class:"input", type:"number", min:"1", step:"1"});
@@ -2808,6 +2814,56 @@ async function openGearModal(existing=null, existingQty=null){
       ])
     ]),
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      (isEdit ? el("button",{class:"btn danger", style:"margin-right:auto", onClick: async (e)=>{
+        e.preventDefault();
+        try{
+          const base = baseName(existing.name);
+          const key = (existing.category||"") + "||" + base;
+          const all = await sbGetAll("gear_items");
+          const groupItems = all.filter(g => gearGroupKey(g) === key);
+
+          const msg = groupItems.length > 1 ? `Delete "${base}" and its ${groupItems.length} copies?` : `Delete "${base}"?`;
+          if(!confirm(msg)) return;
+
+          // Prevent deleting gear that is currently reserved/checked out
+          const ids = groupItems.map(x=>x.id);
+          const { data: resv, error: resvErr } = await supabase
+            .from("reservations")
+            .select("id, status")
+            .in("gear_item_id", ids);
+          if(resvErr) throw resvErr;
+
+          const active = (resv||[]).filter(r=>{
+            const st = (r.status||"").toUpperCase();
+            return !["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st);
+          });
+          if(active.length){
+            alert(`Can't delete "${base}" because ${active.length} reservation(s) still reference it. Remove it from events first.`);
+            return;
+          }
+
+          // delete all items in group
+          for(const gi of groupItems){
+            await sbDelete("gear_items", gi.id);
+          }
+
+          // remove from kits (array) best-effort
+          const kits = await sbGetAll("kits");
+          for(const k of kits){
+            const next = (k.item_ids||[]).filter(x=>!ids.includes(x));
+            if(next.length !== (k.item_ids||[]).length){
+              await sbUpdate("kits", k.id, { item_ids: next, updated_at: new Date().toISOString() });
+            }
+          }
+
+          toast("Deleted gear.");
+          m.close();
+          render();
+        }catch(err){
+          console.error(err);
+          toast(err.message || "Delete failed.");
+        }
+      }},["Delete"]), : el("span",{},[])),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
@@ -2974,7 +3030,7 @@ async function renderEvents(view){
     tabBtn("past","Past / Ended", pastEvents.length),
   ]));
 
-  const list=el("div",{class:"grid"});
+  const list=el("div",{class:"gearGrid"});
   view.appendChild(list);
 
   const eventsToShow = state.eventsTab === "past" ? pastEvents : upcomingEvents;
@@ -3062,6 +3118,56 @@ async function openEventModal(existing=null){
       el("div",{class:"small muted", style:"margin-top:6px"},["Use format: Label | https://... (opens in new tab)"])
     ]),
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      (isEdit ? el("button",{class:"btn danger", style:"margin-right:auto", onClick: async (e)=>{
+        e.preventDefault();
+        try{
+          const base = baseName(existing.name);
+          const key = (existing.category||"") + "||" + base;
+          const all = await sbGetAll("gear_items");
+          const groupItems = all.filter(g => gearGroupKey(g) === key);
+
+          const msg = groupItems.length > 1 ? `Delete "${base}" and its ${groupItems.length} copies?` : `Delete "${base}"?`;
+          if(!confirm(msg)) return;
+
+          // Prevent deleting gear that is currently reserved/checked out
+          const ids = groupItems.map(x=>x.id);
+          const { data: resv, error: resvErr } = await supabase
+            .from("reservations")
+            .select("id, status")
+            .in("gear_item_id", ids);
+          if(resvErr) throw resvErr;
+
+          const active = (resv||[]).filter(r=>{
+            const st = (r.status||"").toUpperCase();
+            return !["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st);
+          });
+          if(active.length){
+            alert(`Can't delete "${base}" because ${active.length} reservation(s) still reference it. Remove it from events first.`);
+            return;
+          }
+
+          // delete all items in group
+          for(const gi of groupItems){
+            await sbDelete("gear_items", gi.id);
+          }
+
+          // remove from kits (array) best-effort
+          const kits = await sbGetAll("kits");
+          for(const k of kits){
+            const next = (k.item_ids||[]).filter(x=>!ids.includes(x));
+            if(next.length !== (k.item_ids||[]).length){
+              await sbUpdate("kits", k.id, { item_ids: next, updated_at: new Date().toISOString() });
+            }
+          }
+
+          toast("Deleted gear.");
+          m.close();
+          render();
+        }catch(err){
+          console.error(err);
+          toast(err.message || "Delete failed.");
+        }
+      }},["Delete"]), : el("span",{},[])),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
@@ -4111,6 +4217,56 @@ async function openKitModal(existing=null){
     q,
     box,
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      (isEdit ? el("button",{class:"btn danger", style:"margin-right:auto", onClick: async (e)=>{
+        e.preventDefault();
+        try{
+          const base = baseName(existing.name);
+          const key = (existing.category||"") + "||" + base;
+          const all = await sbGetAll("gear_items");
+          const groupItems = all.filter(g => gearGroupKey(g) === key);
+
+          const msg = groupItems.length > 1 ? `Delete "${base}" and its ${groupItems.length} copies?` : `Delete "${base}"?`;
+          if(!confirm(msg)) return;
+
+          // Prevent deleting gear that is currently reserved/checked out
+          const ids = groupItems.map(x=>x.id);
+          const { data: resv, error: resvErr } = await supabase
+            .from("reservations")
+            .select("id, status")
+            .in("gear_item_id", ids);
+          if(resvErr) throw resvErr;
+
+          const active = (resv||[]).filter(r=>{
+            const st = (r.status||"").toUpperCase();
+            return !["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st);
+          });
+          if(active.length){
+            alert(`Can't delete "${base}" because ${active.length} reservation(s) still reference it. Remove it from events first.`);
+            return;
+          }
+
+          // delete all items in group
+          for(const gi of groupItems){
+            await sbDelete("gear_items", gi.id);
+          }
+
+          // remove from kits (array) best-effort
+          const kits = await sbGetAll("kits");
+          for(const k of kits){
+            const next = (k.item_ids||[]).filter(x=>!ids.includes(x));
+            if(next.length !== (k.item_ids||[]).length){
+              await sbUpdate("kits", k.id, { item_ids: next, updated_at: new Date().toISOString() });
+            }
+          }
+
+          toast("Deleted gear.");
+          m.close();
+          render();
+        }catch(err){
+          console.error(err);
+          toast(err.message || "Delete failed.");
+        }
+      }},["Delete"]), : el("span",{},[])),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
