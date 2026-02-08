@@ -3265,19 +3265,33 @@ async function renderEventDetail(view, evt){
     const list = el("div",{class:"grid"});
     for(const a of eventAssignments){
       const tm = teamById[a.person_id];
+      const callHref = tm?.phone ? `tel:${String(tm.phone).replace(/[^\d+]/g, "")}` : "";
+      const headshot = el("div",{class:"eventAssignedHeadshot"},[]);
+      if(tm?.headshot_url){
+        headshot.appendChild(el("img",{src:tm.headshot_url, alt:tm?.name || "Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+      } else {
+        headshot.appendChild(el("div",{class:"muted eventAssignedInitial"},[(tm?.name || "?").slice(0,1).toUpperCase()]));
+      }
+
       list.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"stack"},[
-          el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
-          el("div",{class:"kv"},[a.event_role || "No event role"]),
-          (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
-          ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
+        el("div",{class:"row", style:"gap:10px; align-items:flex-start; min-width:0"},[
+          headshot,
+          el("div",{class:"stack", style:"min-width:0"},[
+            el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
+            el("div",{class:"kv"},[a.event_role || "No event role"]),
+            (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
+            ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
+          ])
         ]),
-        el("button",{class:"btn secondary", onClick: async ()=>{
-          const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
-          await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          toast("Removed assignment.");
-          render();
-        }},["Remove"])
+        el("div",{class:"row", style:"gap:8px; justify-content:flex-end"},[
+          (tm?.phone ? el("a",{class:"btn callBtn", href:callHref},["Call"]) : null),
+          el("button",{class:"btn secondary", onClick: async ()=>{
+            const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+            toast("Removed assignment.");
+            render();
+          }},["Remove"])
+        ])
       ]));
     }
     peopleCard.appendChild(list);
