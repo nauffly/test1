@@ -193,6 +193,152 @@ function parseJsonArray(v){
   }
 }
 
+/* ===== Location autocomplete (free / no API key) =====
+   Uses OpenStreetMap Nominatim public endpoint for address suggestions.
+   - Debounced
+   - Minimum 3 chars
+   - Limited to 5 results
+*/
+const __locAutoCache = new Map();
+let __locAutoLastReqAt = 0;
+let __locAutoAbort = null;
+
+function ensureLocationAutocompleteStyles(){
+  if(document.querySelector("#javiLocationAutoStyles")) return;
+  const st = document.createElement("style");
+  st.id = "javiLocationAutoStyles";
+  st.textContent = `
+    .locAutoWrap{ position:relative; }
+    .locSuggestList{
+      position:absolute;
+      left:0; right:0;
+      top: calc(100% + 6px);
+      z-index: 9999;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 92%, #0000);
+      backdrop-filter: blur(10px);
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.22);
+      overflow:hidden;
+      max-height: 240px;
+      display:none;
+    }
+    .locSuggestItem{
+      display:block;
+      width:100%;
+      padding: 10px 12px;
+      text-align:left;
+      background:transparent;
+      border:0;
+      color: var(--text);
+      font-size: 13px;
+      cursor:pointer;
+    }
+    .locSuggestItem:hover{ background: color-mix(in srgb, var(--card) 72%, var(--bg)); }
+    .locSuggestMeta{ display:block; opacity:.68; font-size:12px; margin-top:2px; }
+  `;
+  document.head.appendChild(st);
+}
+
+function debounce(fn, ms){
+  let t=null;
+  return (...args)=>{
+    clearTimeout(t);
+    t=setTimeout(()=>fn(...args), ms);
+  };
+}
+
+async function nominatimSearch(q){
+  const query = String(q||"").trim();
+  if(query.length < 3) return [];
+  if(__locAutoCache.has(query)) return __locAutoCache.get(query);
+
+  // Lightweight rate-limit (nominatim policy is strict; don't spam)
+  const now = Date.now();
+  const wait = Math.max(0, 900 - (now - __locAutoLastReqAt));
+  if(wait) await new Promise(r=>setTimeout(r, wait));
+  __locAutoLastReqAt = Date.now();
+
+  try{
+    if(__locAutoAbort) __locAutoAbort.abort();
+    __locAutoAbort = new AbortController();
+
+    const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&q=" + encodeURIComponent(query);
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      signal: __locAutoAbort.signal
+    });
+    if(!res.ok) return [];
+    const json = await res.json();
+    const out = Array.isArray(json) ? json.map(r=>({
+      label: r.display_name,
+      address: r.address || null
+    })) : [];
+    __locAutoCache.set(query, out);
+    return out;
+  }catch(e){
+    return [];
+  }
+}
+
+function attachLocationAutocomplete(inputEl){
+  if(!inputEl || inputEl.__locAutoAttached) return;
+  inputEl.__locAutoAttached = true;
+
+  ensureLocationAutocompleteStyles();
+
+  const wrap = inputEl.parentElement; // we expect input is inside a wrapper we control
+  if(!wrap) return;
+  wrap.classList.add("locAutoWrap");
+
+  const list = el("div", { class:"locSuggestList" });
+  wrap.appendChild(list);
+
+  const closeList = ()=>{ list.style.display="none"; list.innerHTML=""; };
+  const openList = ()=>{ if(list.innerHTML.trim()) list.style.display="block"; };
+
+  const renderList = (items)=>{
+    list.innerHTML = "";
+    if(!items || !items.length){ closeList(); return; }
+    for(const it of items){
+      const main = it.label;
+      const btn = el("button", { class:"locSuggestItem", type:"button" }, [
+        main,
+      ]);
+      btn.addEventListener("click", ()=>{
+        inputEl.value = main;
+        closeList();
+        inputEl.dispatchEvent(new Event("input", { bubbles:true }));
+        inputEl.focus();
+      });
+      list.appendChild(btn);
+    }
+    list.style.display="block";
+  };
+
+  const doSearch = debounce(async ()=>{
+    const q = inputEl.value;
+    const items = await nominatimSearch(q);
+    renderList(items);
+  }, 220);
+
+  inputEl.addEventListener("input", ()=>{
+    const q = String(inputEl.value||"").trim();
+    if(q.length < 3){ closeList(); return; }
+    doSearch();
+  });
+
+  inputEl.addEventListener("focus", ()=>{
+    const q = String(inputEl.value||"").trim();
+    if(q.length >= 3) doSearch();
+    else openList();
+  });
+
+  // blur -> hide after click chance
+  inputEl.addEventListener("blur", ()=> setTimeout(closeList, 150));
+}
+
 
 
 // --- Empty-state "ghost" card (onboarding) ---
@@ -3087,6 +3233,9 @@ async function openEventModal(existing=null){
   const start=el("input",{class:"input", type:"datetime-local", value: existing ? toInputDateTimeLocal(new Date(existing.start_at)) : toInputDateTimeLocal(now)});
   const end=el("input",{class:"input", type:"datetime-local", value: existing ? toInputDateTimeLocal(new Date(existing.end_at)) : toInputDateTimeLocal(new Date(now.getTime()+4*3600*1000))});
   const loc=el("input",{class:"input", placeholder:"Location (optional)", value: existing?.location || ""});
+  const locWrap=el("div",{},[loc]);
+  // Free address suggestions (OpenStreetMap)
+  try{ attachLocationAutocomplete(loc); }catch(_e){}
   const notes=el("textarea",{class:"textarea", placeholder:"Notes (optional)"});
   notes.value = existing?.notes || "";
   const docs=el("textarea",{class:"textarea", placeholder:"Production docs (one per line: Label | URL)"});
@@ -3101,7 +3250,7 @@ async function openEventModal(existing=null){
     el("hr",{class:"sep"}),
     el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
       el("div",{},[el("label",{class:"small muted"},["Title"]), t]),
-      el("div",{},[el("label",{class:"small muted"},["Location"]), loc]),
+      el("div",{},[el("label",{class:"small muted"},["Location"]), locWrap]),
       el("div",{},[el("label",{class:"small muted"},["Start"]), start]),
       el("div",{},[el("label",{class:"small muted"},["End"]), end]),
     ]),
