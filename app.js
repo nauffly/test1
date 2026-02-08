@@ -2691,7 +2691,7 @@ async function renderGear(view){
   filterCard.appendChild(el("div",{class:"grid", style:"grid-template-columns: 1fr 220px; gap:10px"},[q, cat]));
   view.appendChild(filterCard);
 
-  const list=el("div",{class:"grid"});
+  const list=el("div",{class:"gearGrid"});
   view.appendChild(list);
 
   function refresh(){
