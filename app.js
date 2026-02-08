@@ -294,21 +294,32 @@ async function nominatimSearch(q){
     if(__locAutoAbort) __locAutoAbort.abort();
     __locAutoAbort = new AbortController();
 
-    const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&countrycodes=us&accept-language=en&dedupe=1&q=" + encodeURIComponent(query);
-    const res = await fetch(url, {
+    const urlUS = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&countrycodes=us&accept-language=en&dedupe=1&q=" + encodeURIComponent(query);
+    let res = await fetch(urlUS, {
       method: "GET",
       headers: { "Accept": "application/json" },
       signal: __locAutoAbort.signal
     });
-    if(!res.ok) return [];
-    const json = await res.json();
+
+    // Fallback: if no US hits, try global
+    let json = [];
+    if(res.ok){
+      json = await res.json();
+    }
+    if(!Array.isArray(json) || json.length===0){
+      const urlGlobal = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&accept-language=en&dedupe=1&q=" + encodeURIComponent(query);
+      res = await fetch(urlGlobal, {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        signal: __locAutoAbort.signal
+      });
+      if(!res.ok) return [];
+      json = await res.json();
+    }
+
     const out = Array.isArray(json) ? json.map(r=>({
       label: r.display_name,
-      address: r.address || null,
-      lat: (r.lat!=null ? parseFloat(r.lat) : null),
-      lng: (r.lon!=null ? parseFloat(r.lon) : null),
-      osm_type: r.osm_type || null,
-      osm_id: r.osm_id || null
+      address: r.address || null
     })) : [];
     __locAutoCache.set(query, out);
     return out;
