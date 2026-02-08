@@ -97,18 +97,6 @@ function parseJsonArray(value){
   return [];
 }
 
-function isProductionDocsTypeErr(err){
-  const msg = String(err?.message || err || "").toLowerCase();
-  // Covers: column is text but expression is json/jsonb, invalid json, etc.
-  return msg.includes("production_docs") && (
-    msg.includes("type text") ||
-    msg.includes("invalid input syntax") ||
-    msg.includes("cannot cast") ||
-    msg.includes("json")
-  );
-}
-
-
 
 function findGearByScan(gearItems, rawValue){
   const normalized = normalizeScanText(rawValue);
@@ -2854,23 +2842,12 @@ async function openEventModal(existing=null){
         const s=new Date(start.value), en=new Date(end.value);
         if(!(s<en)){ toast("End must be after start."); return; }
         const nowIso=new Date().toISOString();
-        const productionDocs = (docs.value || "")
-          .split(/
-+/)
-          .map(line=>line.trim())
-          .filter(Boolean)
-          .map(line=>{
-            const parts = line.split("|");
-            if(parts.length === 1){
-              const urlOnly = String(parts[0]||"").trim();
-              if(!urlOnly) return null;
-              return { label: "Document", url: urlOnly };
-            }
-            const label = String(parts[0]||"").trim() || "Document";
-            const url = String(parts.slice(1).join("|")||"").trim();
-            return url ? { label, url } : null;
-          })
-          .filter(Boolean);
+        const productionDocs = docs.value.split(/\n+/).map(line=>line.trim()).filter(Boolean).map(line=>{
+          const [labelPart, ...urlParts] = line.split("|");
+          const label = String(labelPart||"").trim() || "Document";
+          const url = String(urlParts.join("|")||"").trim();
+          return { label, url };
+        }).filter(d=>d.url);
         const row={
           title: t.value.trim(),
           start_at: s.toISOString(),
@@ -2901,15 +2878,7 @@ async function openEventModal(existing=null){
               }
             }
 
-            try{
-              obj = await sbUpdate("events", existing.id, row);
-            }catch(e){
-              if(isProductionDocsTypeErr(e)){
-                obj = await sbUpdate("events", existing.id, { ...row, production_docs: JSON.stringify(productionDocs || []) });
-              }else{
-                throw e;
-              }
-            }
+            obj = await sbUpdate("events", existing.id, row);
 
             // Keep this event's ACTIVE reservations aligned to the new event window
             const {error: upErr} = await supabase
@@ -2925,15 +2894,7 @@ async function openEventModal(existing=null){
             row.status = "DRAFT";
             row.created_by = _currentUser()?.id || null;
             row.created_by_email = _currentUser()?.email || null;
-            try{
-              obj = await sbInsertAudit("events", row);
-            }catch(e){
-              if(isProductionDocsTypeErr(e)){
-                obj = await sbInsertAudit("events", { ...row, production_docs: JSON.stringify(productionDocs || []) });
-              }else{
-                throw e;
-              }
-            }
+            obj = await sbInsertAudit("events", row);
             toast("Created event.");
           }
           m.close();
@@ -2988,27 +2949,6 @@ async function renderEventDetail(view, evt){
     view.appendChild(el("div",{class:"card", style:"margin-bottom:12px"},[
       el("h2",{},["Notes"]),
       el("div",{class:"small", style:"margin-top:8px; white-space:pre-wrap"},[evt.notes])
-    ]));
-  }
-
-
-  // Production docs (external links as buttons)
-  if(productionDocs.length){
-    view.appendChild(el("div",{class:"card", style:"margin-bottom:12px"},[
-      el("h2",{},["Production documents"]),
-      el("div",{class:"row", style:"gap:8px; flex-wrap:wrap; margin-top:10px"},
-        productionDocs.map(d=>{
-          const label = String(d?.label || "Document");
-          const url = String(d?.url || "").trim();
-          if(!url) return null;
-          return el("a",{
-            class:"btn secondary",
-            href: url,
-            target:"_blank",
-            rel:"noopener noreferrer"
-          },[label]);
-        })
-      )
     ]));
   }
 
