@@ -276,6 +276,47 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   text-overflow:ellipsis;
 }
 
+
+/* ===== Team profile cards (card-like layout) ===== */
+.card.teamProfileCard{
+  padding:0;
+  overflow:hidden;
+  text-align:left;
+  align-items:stretch;
+  gap:0;
+}
+.card.teamProfileCard:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(0,0,0,.10);
+}
+
+.teamProfileHeadshot{
+  width:100%;
+  height:170px;
+  border-radius: 16px 16px 0 0;
+  border:0;
+}
+
+.teamProfileInfo{
+  padding:14px 14px 10px;
+  text-align:left;
+  align-items:flex-start;
+  gap:8px;
+}
+
+.teamContactRow{
+  justify-content:flex-start;
+}
+
+.teamProfileActions{
+  width:100%;
+  display:flex;
+  justify-content:flex-end;
+  padding:10px 14px 14px;
+  border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+}
+
 /* ---------- Team profile contact buttons ---------- */
 .teamContactRow{
   justify-content:center;
@@ -846,4 +887,43 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
     flex-wrap: wrap !important;
   }
   .card .btn{ width: auto; }
+}
+
+/* =========================================================
+   Compatibility fallbacks (older mobile WebViews)
+   - Some Android/iOS WebViews don't support color-mix().
+   - When unsupported, rules using color-mix() are ignored,
+     making cards/buttons look "unstyled" on mobile.
+   ========================================================= */
+@supports not (color: color-mix(in srgb, #000 50%, #fff)) {
+  :root{
+    --surface-1:#f8fafc; /* slate-50 */
+    --surface-2:#f1f5f9; /* slate-100 */
+  }
+  [data-theme="dark"]{
+    --surface-1:#14141f;
+    --surface-2:#1a1a28;
+  }
+
+  /* Core surfaces */
+  .topbar{ background: var(--bg); border-bottom:1px solid var(--border); }
+  .card{ background: var(--panel); border:1px solid var(--border); box-shadow: var(--shadow-sm); }
+  .card:hover{ box-shadow: var(--shadow-md); }
+
+  /* Nav pills */
+  .nav a{ color: var(--text); }
+  .nav a:hover{ background: var(--surface-1); border-color: var(--border); }
+  .nav a.active{ background: var(--surface-2); border-color: var(--border); }
+
+  /* Buttons */
+  .btn{ border-color: var(--border); }
+  .btn.secondary{ border-color: var(--border); }
+  .btn.danger{ border-color: var(--danger); }
+
+  /* Team card footer */
+  .teamProfileActions{ background: var(--surface-1); border-top:1px solid var(--border); }
+
+  /* Avatars */
+  .eventAssigneeChip,
+  .eventAssignedHeadshot{ background: var(--panel); border-color: var(--border); }
 }
