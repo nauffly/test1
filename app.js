@@ -1210,10 +1210,30 @@ async function fetchMyWorkspaces(){
 
 
 async function canCreateAnotherWorkspace(){
-  const workspaces = await fetchMyWorkspaces();
-  const owned = workspaces.filter(w=>String(w.role||"").toLowerCase()==="owner");
-  return owned.length < 1;
+  // Hard limit: 1 workspace per user.
+  // Prefer an authoritative check against workspaces.created_by (if RLS allows).
+  try{
+    const {count, error} = await supabase
+      .from("workspaces")
+      .select("id", { count:"exact", head:true })
+      .eq("created_by", state.user.id);
+
+    if(!error && typeof count === "number"){
+      return count < 1;
+    }
+  }catch(_){}
+
+  // Fallback: infer ownership via workspace_members role.
+  try{
+    const workspaces = await fetchMyWorkspaces();
+    const owned = workspaces.filter(w=>String(w.role||"").toLowerCase()==="owner");
+    return owned.length < 1;
+  }catch(_){
+    // If we can't verify, default to NOT allowing another workspace.
+    return false;
+  }
 }
+
 
 async function createWorkspaceByName(wsNameRaw){
   const canCreate = await canCreateAnotherWorkspace();
