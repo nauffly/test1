@@ -85,6 +85,36 @@ function fmtDate(d){
 function normalizeScanText(v){
   return String(v || "").trim().toLowerCase();
 }
+function parseJsonArray(value){
+  if(Array.isArray(value)) return value;
+  if(!value) return [];
+  if(typeof value === "string") {
+    try{
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    }catch(_){ return []; }
+  }
+  return [];
+}
+
+function initialsFromName(name){
+  const parts = String(name||"").trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return "?";
+  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+}
+
+function renderPersonAvatar(person, size=56){
+  const url = String(person?.image_url || "").trim();
+  const wrap = el("div",{style:`width:${size}px;height:${size}px;border-radius:999px;overflow:hidden;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--panel) 92%, transparent);flex:0 0 auto;`});
+  if(url){
+    wrap.appendChild(el("img",{src:url, alt:person?.name || "Headshot", style:"width:100%;height:100%;object-fit:cover"}));
+  } else {
+    wrap.appendChild(el("span",{class:"small muted", style:"font-weight:700"},[initialsFromName(person?.name)]));
+  }
+  return wrap;
+}
+
 
 function findGearByScan(gearItems, rawValue){
   const normalized = normalizeScanText(rawValue);
@@ -207,7 +237,7 @@ function setupHeaderUX(){
   // Reorder nav links if present
   const nav = document.querySelector("#nav");
   if(nav){
-    const order = ["dashboard","events","gear","kits"];
+    const order = ["dashboard","events","gear","kits","team"];
     const links = Array.from(nav.querySelectorAll("a[data-route]"));
     const byRoute = Object.fromEntries(links.map(a=>[a.dataset.route,a]));
     order.forEach(r=>{ if(byRoute[r]) nav.appendChild(byRoute[r]); });
@@ -670,6 +700,16 @@ function isRlsDeniedErr(e){
   return msg.includes("row level security") || msg.includes("rls") || msg.includes("permission denied") || msg.includes("not allowed");
 }
 
+async function getTeamMembersSafe({allowMissing=false}={}){
+  try{
+    return await sbGetAll("team_members", "name");
+  }catch(err){
+    const missing = isMissingTableErr(err) || isSchemaCacheErr(err);
+    if(allowMissing && missing) return null;
+    throw err;
+  }
+}
+
 function pickDisplayName(user){
   const md = user?.user_metadata || {};
   const raw = md.display_name || md.name || md.full_name || localStorage.getItem("javi_display_name") || "";
@@ -907,7 +947,7 @@ async function renameCurrentWorkspace(newName) {
 
   return data.name;
 }
-const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts"]);
+const TENANT_TABLES = new Set(["gear_items","events","kits","reservations","checkouts","team_members"]);
 
 function applyWorkspaceScope(q, includeLegacyNull=false){
   if(state.workspaceMode === "legacy") return q;
@@ -1381,6 +1421,7 @@ async function deleteWorkspaceAndAllData(workspaceId){
     await del("checkouts", "workspace_id", workspaceId);
     await del("kits", "workspace_id", workspaceId);
     await del("events", "workspace_id", workspaceId);
+    await del("team_members", "workspace_id", workspaceId);
     await del("gear_items", "workspace_id", workspaceId);
     await del("workspace_members", "workspace_id", workspaceId);
     await del("workspaces", "id", workspaceId);
@@ -1618,7 +1659,7 @@ async function renderWorkspace(view){
       el("hr",{class:"sep"}),
       el("div",{style:"font-weight:800; color:var(--danger)"},["Danger zone"]),
       el("div",{class:"muted small", style:"margin-top:6px"},[
-        "Delete your account. This also deletes your workspace and all associated data in Supabase (events, gear, kits, reservations, checkouts, and memberships)."
+        "Delete your account. This also deletes your workspace and all associated data in Supabase (events, gear, kits, team members, reservations, checkouts, and memberships)."
       ])
     ]);
     const deleteBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick:async ()=>{
@@ -1794,7 +1835,7 @@ async function renderCreateWorkspace(view){
   const card = el("div",{class:"card", style:"max-width:560px; margin:24px auto"});
   card.appendChild(el("h1",{},["Create your workspace"]));
   card.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
-    "This keeps your gear, events, and kits private to your team.",
+    "This keeps your gear, events, kits, and team private to your workspace.",
     el("br"),
     "You can create 1 workspace per user for now."
   ]));
@@ -2063,6 +2104,7 @@ async function renderOnce(){
   if(state.route==="gear") return renderGear(view);
   if(state.route==="events") return renderEvents(view);
   if(state.route==="kits") return renderKits(view);
+  if(state.route==="team") return renderTeam(view);
   if(state.route==="workspace") return renderWorkspace(view);
 
   view.appendChild(el("div",{class:"card"},["Not found."]));
@@ -2661,6 +2703,9 @@ async function openEventModal(existing=null){
   const loc=el("input",{class:"input", placeholder:"Location (optional)", value: existing?.location || ""});
   const notes=el("textarea",{class:"textarea", placeholder:"Notes (optional)"});
   notes.value = existing?.notes || "";
+  const docs=el("textarea",{class:"textarea", placeholder:"Production docs (one per line: Label | URL)"});
+  const existingDocs = parseJsonArray(existing?.production_docs);
+  docs.value = existingDocs.map(d=>`${d.label||"Document"} | ${d.url||""}`).join("\n");
 
   const m = modal(el("div",{},[
     el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
@@ -2675,6 +2720,11 @@ async function openEventModal(existing=null){
       el("div",{},[el("label",{class:"small muted"},["End"]), end]),
     ]),
     el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
+    el("div",{style:"margin-top:10px"},[
+      el("label",{class:"small muted"},["Production docs"]),
+      docs,
+      el("div",{class:"small muted", style:"margin-top:6px"},["Use format: Label | https://... (opens in new tab)"])
+    ]),
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
@@ -2683,12 +2733,19 @@ async function openEventModal(existing=null){
         const s=new Date(start.value), en=new Date(end.value);
         if(!(s<en)){ toast("End must be after start."); return; }
         const nowIso=new Date().toISOString();
+        const productionDocs = docs.value.split(/\n+/).map(line=>line.trim()).filter(Boolean).map(line=>{
+          const [labelPart, ...urlParts] = line.split("|");
+          const label = String(labelPart||"").trim() || "Document";
+          const url = String(urlParts.join("|")||"").trim();
+          return { label, url };
+        }).filter(d=>d.url);
         const row={
           title: t.value.trim(),
           start_at: s.toISOString(),
           end_at: en.toISOString(),
           location: loc.value.trim(),
           notes: notes.value.trim(),
+          production_docs: productionDocs,
           updated_at: nowIso
         };
         try{
@@ -2745,7 +2802,11 @@ async function openEventModal(existing=null){
 async function renderEventDetail(view, evt){
   const gear = await sbGetAll("gear_items");
   const kits = await sbGetAll("kits");
+  const teamMembers = (await getTeamMembersSafe({allowMissing:true})) || [];
   const gearById = Object.fromEntries(gear.map(g=>[g.id,g]));
+  const teamById = Object.fromEntries(teamMembers.map(t=>[t.id,t]));
+  const eventAssignments = parseJsonArray(evt.assigned_people);
+  const productionDocs = parseJsonArray(evt.production_docs);
   const allReservations = (await sbGetAll("reservations")).filter(r=>r.event_id===evt.id);
   const reservations = allReservations.filter(r=>String(r.status||"").toUpperCase()==="ACTIVE");
   const returnedReservations = allReservations.filter(r=>String(r.status||"").toUpperCase()==="RETURNED");
@@ -3146,6 +3207,87 @@ async function renderEventDetail(view, evt){
   });
 
 
+  const rightCol = el("div",{class:"stack", style:"gap:12px"});
+
+  const peopleCard = el("div",{class:"card"});
+  peopleCard.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+    el("h2",{},["Assigned people"]),
+    el("span",{class:"badge"},[String(eventAssignments.length)])
+  ]));
+  peopleCard.appendChild(el("hr",{class:"sep"}));
+  if(!eventAssignments.length){
+    peopleCard.appendChild(el("div",{class:"muted"},["No people assigned yet."]));
+  } else {
+    const list = el("div",{class:"grid"});
+    for(const a of eventAssignments){
+      const tm = teamById[a.person_id];
+      list.appendChild(el("div",{class:"listItem"},[
+        el("div",{class:"row", style:"gap:10px; align-items:center"},[
+          renderPersonAvatar(tm || {name:"Unknown person"}, 42),
+          el("div",{class:"stack"},[
+            el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
+            el("div",{class:"kv"},[a.event_role || "No event role"]),
+            (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
+            ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
+          ])
+        ]),
+        el("button",{class:"btn secondary", onClick: async ()=>{
+          const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
+          await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+          toast("Removed assignment.");
+          render();
+        }},["Remove"])
+      ]));
+    }
+    peopleCard.appendChild(list);
+  }
+
+  const assignRow = el("div",{class:"row", style:"gap:8px; margin-top:10px; flex-wrap:wrap"});
+  const personPick = el("select",{class:"select", style:"flex:1; min-width:180px"});
+  personPick.appendChild(el("option",{value:""},["Assign team member…"]));
+  for(const tm of teamMembers){
+    personPick.appendChild(el("option",{value:tm.id},[tm.name]));
+  }
+  const roleInput = el("input",{class:"input", placeholder:"Event role (Crew, Actor, Director…)", style:"flex:1; min-width:220px"});
+  assignRow.appendChild(personPick);
+  assignRow.appendChild(roleInput);
+  assignRow.appendChild(el("button",{class:"btn secondary", onClick: async ()=>{
+    const personId = personPick.value;
+    if(!personId){ toast("Select a team member."); return; }
+    const role = roleInput.value.trim();
+    const next = eventAssignments.filter(x=>x.person_id!==personId);
+    next.push({ person_id: personId, event_role: role || "Crew" });
+    await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+    toast("Assigned person.");
+    render();
+  }},["Assign"]));
+  peopleCard.appendChild(assignRow);
+  peopleCard.appendChild(el("div",{class:"small muted", style:"margin-top:6px"},["Tip: add people in Team first, then assign them per event here."]));
+  rightCol.appendChild(peopleCard);
+
+  const docsCard = el("div",{class:"card"});
+  docsCard.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+    el("h2",{},["Production docs"]),
+    el("span",{class:"badge"},[String(productionDocs.length)])
+  ]));
+  docsCard.appendChild(el("hr",{class:"sep"}));
+  if(!productionDocs.length){
+    docsCard.appendChild(el("div",{class:"muted"},["No production documents yet."]));
+  } else {
+    const list = el("div",{class:"grid"});
+    for(const doc of productionDocs){
+      list.appendChild(el("div",{class:"listItem"},[
+        el("div",{class:"stack"},[
+          el("div",{style:"font-weight:700"},[doc.label || "Document"]),
+          el("div",{class:"small muted"},[doc.url || ""])
+        ]),
+        el("a",{class:"btn secondary", href:doc.url, target:"_blank", rel:"noopener noreferrer"},["Open"])
+      ]));
+    }
+    docsCard.appendChild(list);
+  }
+  rightCol.appendChild(docsCard);
+
   const right=el("div",{class:"card"});
   right.appendChild(el("h2",{},["Checked out"]));
   right.appendChild(el("div",{class:"small muted", style:"margin-top:6px"},[
@@ -3201,7 +3343,6 @@ async function renderEventDetail(view, evt){
 
         const nowIso = new Date().toISOString();
 
-        // Mark this event's ACTIVE reservations returned (so they are available again)
         const {error: rErr} = await supabase
           .from("reservations")
           .update({ status:"RETURNED", returned_by: _currentUser()?.id || null, returned_by_email: _currentUser()?.email || null, returned_at: nowIso })
@@ -3209,7 +3350,6 @@ async function renderEventDetail(view, evt){
           .eq("status","ACTIVE");
         if(rErr) throw rErr;
 
-        // Best-effort: close any legacy OPEN checkout rows tied to this event
         try{
           await supabase
             .from("checkouts")
@@ -3224,12 +3364,11 @@ async function renderEventDetail(view, evt){
         render();
       }},["Return all"])
     ]));
-
-        // (List removed) No duplicate gear display here.
   }
+  rightCol.appendChild(right);
 
   grid.appendChild(left);
-  grid.appendChild(right);
+  grid.appendChild(rightCol);
   view.appendChild(grid);
 }
 
@@ -3283,6 +3422,149 @@ async function renderKits(view){
     ]));
     list.appendChild(card);
   }
+}
+
+
+async function renderTeam(view){
+  const membersRaw = await getTeamMembersSafe({allowMissing:true});
+
+  view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
+    el("div",{},[
+      el("h1",{},["Team"]),
+      el("div",{class:"muted small"},["Create people and keep crew/actor/contact details in one place."])
+    ]),
+    el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal()},["Add person"])
+  ]));
+
+  const list = el("div",{class:"grid two"});
+  view.appendChild(list);
+
+  if(!membersRaw){
+    list.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Team setup required"]),
+      el("div",{class:"small muted", style:"margin-top:8px"},[
+        "Supabase does not have public.team_members yet (or schema cache is stale). Run the updated supabase_setup.sql in Supabase SQL Editor, then refresh this page."
+      ])
+    ]));
+    return;
+  }
+
+  const members = membersRaw.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  if(!members.length){
+    list.appendChild(el("div",{class:"card"},["No team members yet."]));
+    return;
+  }
+
+  for(const m of members){
+    const card = el("div",{class:"card"});
+    card.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start; gap:10px"},[
+      el("div",{class:"row", style:"gap:10px; align-items:center"},[
+        renderPersonAvatar(m, 56),
+        el("div",{class:"stack"},[
+          el("div",{style:"font-weight:800"},[m.name || "Unnamed"]),
+          el("div",{class:"muted small"},[m.title || "No title"]),
+          el("div",{class:"small muted"},[[m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"]),
+          (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
+        ])
+      ])
+    ]));
+    if(m.notes){
+      card.appendChild(el("div",{class:"small", style:"margin-top:8px; white-space:pre-wrap"},[m.notes]));
+    }
+    card.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
+      el("button",{class:"btn danger", onClick:async ()=>{
+        if(!confirm(`Delete ${m.name || "this person"}?`)) return;
+        try{
+          await sbDelete("team_members", m.id);
+        }catch(err){
+          if(isMissingTableErr(err) || isSchemaCacheErr(err)){
+            toast("Team table is missing. Run supabase_setup.sql and refresh.");
+            return;
+          }
+          toast(err.message || String(err));
+          return;
+        }
+        const events = await sbGetAll("events");
+        for(const evt of events){
+          const assignments = parseJsonArray(evt.assigned_people);
+          const next = assignments.filter(a=>a.person_id!==m.id);
+          if(next.length !== assignments.length){
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+          }
+        }
+        toast("Deleted team member.");
+        render();
+      }},["Delete"])
+    ]));
+    list.appendChild(card);
+  }
+}
+
+async function openTeamMemberModal(existing=null){
+  const isEdit = !!existing;
+  const name = el("input",{class:"input", placeholder:"Name", value: existing?.name || ""});
+  const title = el("input",{class:"input", placeholder:"Title", value: existing?.title || ""});
+  const defaultRole = el("input",{class:"input", placeholder:"Default role (Crew, Actor, etc.)", value: existing?.default_role || ""});
+  const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
+  const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
+  const headshotUrl = el("input",{class:"input", placeholder:"Headshot image URL", value: existing?.image_url || ""});
+  const notes = el("textarea",{class:"textarea", placeholder:"Notes"});
+  notes.value = existing?.notes || "";
+
+  const m = modal(el("div",{},[
+    el("div",{class:"row", style:"justify-content:space-between; align-items:center"},[
+      el("h2",{},[isEdit?"Edit person":"Add person"]),
+      el("span",{class:"badge"},[isEdit?"Update":"Create"])
+    ]),
+    el("hr",{class:"sep"}),
+    el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
+      el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
+      el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
+      el("div",{},[el("label",{class:"small muted"},["Default role"]), defaultRole]),
+      el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
+      el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
+      el("div",{},[el("label",{class:"small muted"},["Headshot URL"]), headshotUrl]),
+    ]),
+    el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
+    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
+      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+      el("button",{class:"btn", onClick: async (e)=>{
+        e.preventDefault();
+        if(!name.value.trim()){ toast("Name is required."); return; }
+        const nowIso = new Date().toISOString();
+        const row = {
+          name: name.value.trim(),
+          title: title.value.trim(),
+          default_role: defaultRole.value.trim(),
+          phone: phone.value.trim(),
+          email: email.value.trim(),
+          image_url: headshotUrl.value.trim(),
+          notes: notes.value.trim(),
+          updated_at: nowIso
+        };
+        try{
+          if(isEdit){
+            await sbUpdate("team_members", existing.id, row);
+            toast("Updated person.");
+          } else {
+            row.created_at = nowIso;
+            await sbInsert("team_members", row);
+            toast("Added person.");
+          }
+        }catch(err){
+          if(isMissingTableErr(err) || isSchemaCacheErr(err)){
+            toast("Team table is missing. Run supabase_setup.sql and refresh.");
+            return;
+          }
+          toast(err.message || String(err));
+          return;
+        }
+        m.close();
+        render();
+      }},[isEdit?"Save":"Create"])
+    ])
+  ]));
 }
 
 async function openKitModal(existing=null){
