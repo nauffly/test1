@@ -219,6 +219,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 
 /* ---------- Cards (soft hover elevation) ---------- */
 .card{
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 85%, transparent);
   border-radius: var(--radius-lg);
   padding:14px;
@@ -313,6 +315,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   display:flex;
   justify-content:flex-end;
   padding:10px 14px 14px;
+  border-top:1px solid var(--border);
+  background: var(--bg);
   border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent);
   background: color-mix(in srgb, var(--bg) 96%, transparent);
 }
@@ -341,6 +345,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   height:28px;
   border-radius:999px;
   overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   flex:0 0 auto;
@@ -360,6 +366,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   height:40px;
   border-radius:14px;
   overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   flex:0 0 auto;
@@ -419,6 +427,10 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   gap:10px;
   padding:12px;
   border-radius: var(--radius);
+  border:1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-sm);
+  align-items:flex-start;
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: var(--surface-1);
   transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease), border-color var(--dur) var(--ease);
@@ -426,9 +438,8 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 
 .listItem:hover{
   transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-  background: var(--surface-2);
-  border-color: color-mix(in srgb, var(--border) 95%, transparent);
+  box-shadow: var(--shadow-md);
+  border-color: color-mix(in srgb, var(--border) 92%, transparent);
 }
 
 .stack{display:flex; flex-direction:column; gap:6px}
@@ -529,6 +540,8 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   font-size:12px;
   padding:5px 8px;
   border-radius: 12px;
+  border:1px solid var(--border);
+  background: var(--panel);
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   white-space:nowrap;
