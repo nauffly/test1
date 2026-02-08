@@ -289,7 +289,7 @@ async function nominatimSearch(q){
     if(__locAutoAbort) __locAutoAbort.abort();
     __locAutoAbort = new AbortController();
 
-    const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&q=" + encodeURIComponent(query);
+    const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&countrycodes=us&accept-language=en&dedupe=1&q=" + encodeURIComponent(query);
     const res = await fetch(url, {
       method: "GET",
       headers: { "Accept": "application/json" },
