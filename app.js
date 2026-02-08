@@ -2464,7 +2464,21 @@ async function renderDashboard(view){
         page.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
           el("div",{class:"stack"},[
             el("div",{style:"font-weight:700"},[e.title]),
-            el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
+            // Date/time (bigger + easier at a glance)
+(()=>{
+  const s = new Date(e.start_at);
+  const en = new Date(e.end_at);
+  const sameDay = s.toDateString() === en.toDateString();
+  const fmtDay = (d)=>d.toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric", year:"numeric"});
+  const fmtTime = (d)=>d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  const dayLine = sameDay ? fmtDay(s) : `${fmtDay(s)} → ${fmtDay(en)}`;
+  const timeLine = `${fmtTime(s)} → ${fmtTime(en)}`;
+  return el("div",{style:"display:flex;flex-direction:column;gap:2px"},[
+    el("div",{style:"font-weight:700; font-size:14px; line-height:1.2"},[dayLine]),
+    el("div",{class:"kv", style:"font-size:13px"},[timeLine]),
+  ]);
+})(),
+
             el("div",{class:"kv"},[e.location || "No location"])
           ]),
           el("span",{class:"badge"},[e.status||"DRAFT"])
@@ -2677,7 +2691,7 @@ async function renderGear(view){
   filterCard.appendChild(el("div",{class:"grid", style:"grid-template-columns: 1fr 220px; gap:10px"},[q, cat]));
   view.appendChild(filterCard);
 
-  const list=el("div",{class:"gearGrid"});
+  const list=el("div",{class:"grid"});
   view.appendChild(list);
 
   function refresh(){
@@ -2996,7 +3010,7 @@ async function renderEvents(view){
     tabBtn("past","Past / Ended", pastEvents.length),
   ]));
 
-  const list=el("div",{class:"gearGrid"});
+  const list=el("div",{class:"grid"});
   view.appendChild(list);
 
   const eventsToShow = state.eventsTab === "past" ? pastEvents : upcomingEvents;
@@ -3043,7 +3057,21 @@ async function renderEvents(view){
     list.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
       el("div",{class:"stack"},[
         el("div",{style:"font-weight:700"},[e.title]),
-        el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
+        // Date/time (bigger + easier at a glance)
+(()=>{
+  const s = new Date(e.start_at);
+  const en = new Date(e.end_at);
+  const sameDay = s.toDateString() === en.toDateString();
+  const fmtDay = (d)=>d.toLocaleDateString(undefined,{weekday:"short", month:"short", day:"numeric", year:"numeric"});
+  const fmtTime = (d)=>d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  const dayLine = sameDay ? fmtDay(s) : `${fmtDay(s)} → ${fmtDay(en)}`;
+  const timeLine = `${fmtTime(s)} → ${fmtTime(en)}`;
+  return el("div",{style:"display:flex;flex-direction:column;gap:2px"},[
+    el("div",{style:"font-weight:700; font-size:14px; line-height:1.2"},[dayLine]),
+    el("div",{class:"kv", style:"font-size:13px"},[timeLine]),
+  ]);
+})(),
+
         el("div",{class:"kv"},[e.location || "No location"]),
         assigneeStrip
       ]),
