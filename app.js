@@ -1,5 +1,87 @@
 
 var supabase;
+
+// ===== Emergency controls (prevents total lock-out if UI becomes unclickable) =====
+(function(){
+  function injectEmergencyBar(){
+    try{
+      if(document.getElementById('javiEmergencyBar')) return;
+      const bar=document.createElement('div');
+      bar.id='javiEmergencyBar';
+      bar.setAttribute('style', [
+        'position:fixed',
+        'top:10px',
+        'right:10px',
+        'z-index:99999',
+        'display:flex',
+        'gap:8px',
+        'padding:6px',
+        'border-radius:999px',
+        'background:rgba(0,0,0,.35)',
+        'backdrop-filter: blur(8px)',
+        '-webkit-backdrop-filter: blur(8px)',
+        'pointer-events:auto'
+      ].join(';'));
+
+      function mkBtn(label, onClick){
+        const b=document.createElement('button');
+        b.type='button';
+        b.textContent=label;
+        b.setAttribute('style', [
+          'appearance:none',
+          'border:1px solid rgba(255,255,255,.25)',
+          'background:rgba(255,255,255,.12)',
+          'color:#fff',
+          'font-weight:700',
+          'font-size:12px',
+          'padding:6px 10px',
+          'border-radius:999px',
+          'cursor:pointer'
+        ].join(';'));
+        b.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); try{ onClick(); }catch(err){ console.error(err); alert(err?.message||String(err)); } });
+        return b;
+      }
+
+      bar.appendChild(mkBtn('Home', ()=>{ location.hash='#dashboard'; }));
+      bar.appendChild(mkBtn('Events', ()=>{ location.hash='#events'; }));
+      bar.appendChild(mkBtn('Team', ()=>{ location.hash='#team'; }));
+      bar.appendChild(mkBtn('Reset', ()=>{
+        try{
+          localStorage.clear();
+          sessionStorage.clear();
+        }catch(_){}
+        location.hash='#dashboard';
+        location.reload();
+      }));
+      bar.appendChild(mkBtn('Logout', async ()=>{
+        try{
+          if(window.supabase && supabase){
+            await supabase.auth.signOut();
+          }
+        }catch(err){ console.warn(err); }
+        try{
+          localStorage.clear();
+          sessionStorage.clear();
+        }catch(_){}
+        location.hash='#';
+        location.reload();
+      }));
+
+      document.body.appendChild(bar);
+    }catch(err){ console.warn('Emergency bar failed', err); }
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', injectEmergencyBar);
+  else injectEmergencyBar();
+
+  // Surface fatal runtime errors so you can still navigate + recover
+  window.addEventListener('error', (e)=>{
+    try{
+      console.error(e.error||e.message||e);
+    }catch(_){}
+  });
+})();
+
 // JAVI_BUILD: 2026-02-07-team-cards-v1
 /**
  * Javi (Online-first) — Supabase-backed static app
