@@ -2549,10 +2549,28 @@ async function openGearModal(existing=null, existingQty=null){
         preview
       ])
     ]),
-    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
-      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
-      el("button",{class:"btn", onClick: async (e)=>{
+    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
+      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
         e.preventDefault();
+        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
+        await sbDelete("team_members", existing.id);
+
+        // Remove from any events that reference this person
+        const events = await sbGetAll("events");
+        for(const evt of events){
+          const assignments = parseJsonArray(evt.assigned_people);
+          const next = assignments.filter(a=>a.person_id!==existing.id);
+          if(next.length !== assignments.length){
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+          }
+        }
+        toast("Deleted team member.");
+        m.close();
+        render();
+      }},["Delete"]) : el("div",{},[""])),
+      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
+        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+        el("button",{class:"btn", onClick: async (e)=>{e.preventDefault();
         if(!name.value.trim()){ toast("Name is required."); return; }
         const now = new Date().toISOString();
         const row = {
@@ -3571,24 +3589,8 @@ async function renderTeam(view){
     card.appendChild(imgWrap);
     card.appendChild(info);
 
-    card.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
-      el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
-      el("button",{class:"btn danger", onClick:async ()=>{
-        if(!confirm(`Delete ${m.name || "this person"}?`)) return;
-        await sbDelete("team_members", m.id);
-
-        // Remove from any events that reference this person
-        const events = await sbGetAll("events");
-        for(const evt of events){
-          const assignments = parseJsonArray(evt.assigned_people);
-          const next = assignments.filter(a=>a.person_id!==m.id);
-          if(next.length !== assignments.length){
-            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          }
-        }
-        toast("Deleted team member.");
-        render();
-      }},["Delete"])
+    card.appendChild(el("div",{class:"teamProfileActions"},[
+      el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"])
     ]));
 
     list.appendChild(card);
@@ -3663,8 +3665,27 @@ async function openTeamMemberModal(existing=null){
 
     el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
 
-    el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
-      el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
+    el("div",{class:"row", style:"justify-content:space-between; align-items:center; margin-top:10px"},[
+      (isEdit ? el("button",{class:"btn danger", onClick: async (e)=>{
+        e.preventDefault();
+        if(!confirm(`Delete ${existing?.name || "this person"}?`)) return;
+        await sbDelete("team_members", existing.id);
+
+        // Remove from any events that reference this person
+        const events = await sbGetAll("events");
+        for(const evt of events){
+          const assignments = parseJsonArray(evt.assigned_people);
+          const next = assignments.filter(a=>a.person_id!==existing.id);
+          if(next.length !== assignments.length){
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+          }
+        }
+        toast("Deleted team member.");
+        m.close();
+        render();
+      }},["Delete"]) : el("div",{},[""])),
+      el("div",{class:"row", style:"justify-content:flex-end; gap:10px"},[
+        el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
         if(!name.value.trim()){ toast("Name is required."); return; }
@@ -3725,7 +3746,8 @@ async function openTeamMemberModal(existing=null){
           }
           toast(err?.message || String(err));
         }
-      }},[isEdit?"Save":"Create"])
+        }},[isEdit?"Save":"Create"])
+      ])
     ])
   ]));
 }
