@@ -2680,6 +2680,8 @@ async function renderEvents(view){
 
   // ---- Tabs: Upcoming vs Past/Ended ----
   const allEvents = await sbGetAll("events");
+  const teamMembers = await sbGetAll("team_members", "name");
+  const teamById = Object.fromEntries(teamMembers.map(t=>[t.id,t]));
   const now = new Date();
 
   const upcomingEvents = allEvents
@@ -2727,11 +2729,34 @@ async function renderEvents(view){
   }
 
   for(const e of eventsToShow){
+    const assignees = parseJsonArray(e.assigned_people)
+      .map(a=>teamById[a.person_id])
+      .filter(Boolean);
+
+    const assigneeStrip = el("div",{class:"eventAssigneeStrip"},[]);
+    if(assignees.length){
+      for(const tm of assignees.slice(0,4)){
+        const chip = el("div",{class:"eventAssigneeChip", title:tm.name || "Assigned"},[]);
+        if(tm.headshot_url){
+          chip.appendChild(el("img",{src:tm.headshot_url, alt:tm.name || "Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+        } else {
+          chip.appendChild(el("div",{class:"muted eventAssigneeInitial"},[(tm.name||"?").slice(0,1).toUpperCase()]));
+        }
+        assigneeStrip.appendChild(chip);
+      }
+      if(assignees.length > 4){
+        assigneeStrip.appendChild(el("span",{class:"small muted"},[`+${assignees.length-4}`]));
+      }
+    } else {
+      assigneeStrip.appendChild(el("span",{class:"small muted"},["No people assigned"]));
+    }
+
     list.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
       el("div",{class:"stack"},[
         el("div",{style:"font-weight:700"},[e.title]),
         el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
-        el("div",{class:"kv"},[e.location || "No location"])
+        el("div",{class:"kv"},[e.location || "No location"]),
+        assigneeStrip
       ]),
       el("span",{class:"badge"},[e.status||"DRAFT"])
     ]));
@@ -3265,19 +3290,33 @@ async function renderEventDetail(view, evt){
     const list = el("div",{class:"grid"});
     for(const a of eventAssignments){
       const tm = teamById[a.person_id];
+      const callHref = tm?.phone ? `tel:${String(tm.phone).replace(/[^\d+]/g, "")}` : "";
+      const headshot = el("div",{class:"eventAssignedHeadshot"},[]);
+      if(tm?.headshot_url){
+        headshot.appendChild(el("img",{src:tm.headshot_url, alt:tm?.name || "Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+      } else {
+        headshot.appendChild(el("div",{class:"muted eventAssignedInitial"},[(tm?.name || "?").slice(0,1).toUpperCase()]));
+      }
+
       list.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"stack"},[
-          el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
-          el("div",{class:"kv"},[a.event_role || "No event role"]),
-          (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
-          ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
+        el("div",{class:"row", style:"gap:10px; align-items:flex-start; min-width:0"},[
+          headshot,
+          el("div",{class:"stack", style:"min-width:0"},[
+            el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
+            el("div",{class:"kv"},[a.event_role || "No event role"]),
+            (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
+            ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
+          ])
         ]),
-        el("button",{class:"btn secondary", onClick: async ()=>{
-          const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
-          await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
-          toast("Removed assignment.");
-          render();
-        }},["Remove"])
+        el("div",{class:"row", style:"gap:8px; justify-content:flex-end"},[
+          (tm?.phone ? el("a",{class:"btn callBtn", href:callHref},["Call"]) : null),
+          el("button",{class:"btn secondary", onClick: async ()=>{
+            const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
+            await sbUpdate("events", evt.id, { assigned_people: next, updated_at: new Date().toISOString() });
+            toast("Removed assignment.");
+            render();
+          }},["Remove"])
+        ])
       ]));
     }
     peopleCard.appendChild(list);
@@ -3508,35 +3547,40 @@ async function renderTeam(view){
   }
 
   for(const m of members){
-    const card = el("div",{class:"card"});
+    const card = el("div",{class:"card teamProfileCard"});
 
-    const top = el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start; gap:12px"},[]);
-    const left = el("div",{class:"row", style:"gap:12px; align-items:flex-start; min-width:0"},[]);
-
-    const imgWrap = el("div",{style:"width:56px; height:56px; border-radius:14px; overflow:hidden; border:1px solid var(--border); flex:0 0 auto; background:color-mix(in srgb, var(--bg) 86%, transparent)"},[]);
+    const imgWrap = el("div",{class:"teamProfileHeadshot"},[]);
     if(m.headshot_url){
       imgWrap.appendChild(el("img",{src:m.headshot_url, alt:m.name||"Headshot", style:"width:100%; height:100%; object-fit:cover"}));
     } else {
-      imgWrap.appendChild(el("div",{class:"muted", style:"width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-weight:800"},[(m.name||"?").slice(0,1).toUpperCase()]));
+      imgWrap.appendChild(el("div",{class:"muted teamProfileInitial"},[(m.name||"?").slice(0,1).toUpperCase()]));
     }
 
-    const info = el("div",{class:"stack", style:"min-width:0"},[
-      el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[m.name || "Unnamed"]),
-      el("div",{class:"muted small"},[m.title || "No title"]),
-      el("div",{class:"small muted"},[
-        [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
-      ]),
-      (m.website ? el("div",{class:"small"},[
-        el("a",{href:m.website, target:"_blank", rel:"noopener noreferrer"},["Website"])
-      ]) : null),
-      (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
+    const info = el("div",{class:"stack teamProfileInfo"},[
+      el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
+      el("div",{class:"muted small"},[m.title || "No title"])
     ]);
 
-    left.appendChild(imgWrap);
-    left.appendChild(info);
+    const phoneRaw = (m.phone || "").trim();
+    const emailRaw = (m.email || "").trim();
 
-    top.appendChild(left);
-    card.appendChild(top);
+    if(phoneRaw){
+      const phoneHref = `tel:${phoneRaw.replace(/[^\d+]/g, "")}`;
+      info.appendChild(el("div",{class:"small muted teamContactValue"},[phoneRaw]));
+      info.appendChild(el("a",{class:"btn secondary teamContactBtn", href:phoneHref},["Call"]));
+    }
+
+    if(emailRaw){
+      info.appendChild(el("div",{class:"small muted teamContactValue"},[emailRaw]));
+      info.appendChild(el("a",{class:"btn secondary teamContactBtn", href:`mailto:${emailRaw}`},["Email"]));
+    }
+
+    if(!phoneRaw && !emailRaw){
+      info.appendChild(el("div",{class:"small muted"},["No contact info"]));
+    }
+
+    card.appendChild(imgWrap);
+    card.appendChild(info);
 
     if(m.notes){
       card.appendChild(el("div",{class:"small", style:"margin-top:10px; white-space:pre-wrap"},[m.notes]));
@@ -3577,7 +3621,8 @@ async function openTeamMemberModal(existing=null){
   const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
   const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
   const website = el("input",{class:"input", placeholder:"Website (optional)", value: existing?.website || ""});
-  const instagram = el("input",{class:"input", placeholder:"Instagram (optional)", value: existing?.instagram || ""});
+  const headshotFile = el("input",{type:"file", accept:"image/*", class:"input"});
+  const headshotHint = el("div",{class:"small muted"},["Paste a URL or upload an image."]);
 
   const notes = el("textarea",{class:"textarea", placeholder:"Notes (rates, availability, address, etc.)"});
   notes.value = existing?.notes || "";
@@ -3593,6 +3638,18 @@ async function openTeamMemberModal(existing=null){
     }
   };
   headshotUrl.addEventListener("input", repaintPreview);
+  headshotFile.addEventListener("change", async ()=>{
+    const f = headshotFile.files?.[0];
+    if(!f) return;
+    try{
+      headshotUrl.value = await fileToDataURL(f);
+      headshotHint.textContent = "Headshot selected (stored as data URL).";
+      repaintPreview();
+    }catch(err){
+      console.error(err);
+      toast("Could not read that image file.");
+    }
+  });
   name.addEventListener("input", repaintPreview);
   repaintPreview();
 
@@ -3607,6 +3664,7 @@ async function openTeamMemberModal(existing=null){
       preview,
       el("div",{class:"stack", style:"flex:1; gap:10px"},[
         el("div",{},[el("label",{class:"small muted"},["Headshot URL"]), headshotUrl]),
+        el("div",{},[el("label",{class:"small muted"},["Upload headshot"]), headshotFile, headshotHint]),
         el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
           el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
           el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
@@ -3614,7 +3672,6 @@ async function openTeamMemberModal(existing=null){
           el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
           el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
           el("div",{},[el("label",{class:"small muted"},["Website"]), website]),
-          el("div",{},[el("label",{class:"small muted"},["Instagram"]), instagram]),
         ])
       ])
     ]),
@@ -3636,7 +3693,6 @@ async function openTeamMemberModal(existing=null){
           phone: phone.value.trim(),
           email: email.value.trim(),
           website: website.value.trim(),
-          instagram: instagram.value.trim(),
           notes: notes.value.trim(),
           updated_at: nowIso
         };
