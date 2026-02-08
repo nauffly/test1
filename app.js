@@ -312,34 +312,13 @@ async function nominatimSearch(q){
   }
 
 
-// --- Location storage + maps helpers ---
-function __eventLocKey(eventId){ return "javi_evt_loc_" + String(eventId||""); }
-function storeEventLatLng(eventId, lat, lng){
-  try{
-    if(!eventId) return;
-    if(lat==null || lng==null || isNaN(lat) || isNaN(lng)) return;
-    localStorage.setItem(__eventLocKey(eventId), JSON.stringify({lat:+lat, lng:+lng, ts:Date.now()}));
-  }catch(_e){}
-}
-function null{
-  try{
-    const raw = localStorage.getItem(__eventLocKey(eventId));
-    if(!raw) return null;
-    const o = JSON.parse(raw);
-    if(!o || o.lat==null || o.lng==null) return null;
-    return {lat:+o.lat, lng:+o.lng};
-  }catch(_e){ return null; }
-}
-// Expose helper globally (prevents "not defined" when called from other scopes)
-try{ window.loadEventLatLng = loadEventLatLng; }catch(_e){}
-
-function mapsSearchUrl({lat,lng, address}){
+// --- Maps helpers (address-only) ---
+function mapsSearchUrl(address){
   const a = String(address||"").trim();
-  if(lat!=null && lng!=null && !isNaN(lat) && !isNaN(lng)){
-    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(lat + "," + lng);
-  }
   return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a);
 }
+
+// (coords-based static map removed)
 function osmStaticMapUrl(lat,lng){
   const center = encodeURIComponent(lat + "," + lng);
   return "https://staticmap.openstreetmap.de/staticmap.php?center=" + center +
@@ -747,7 +726,7 @@ function renderEventDateHero(evt){
   body.appendChild(el("div",{class:"eventDateHeroDate"},[dateText]));
   if(timeText) body.appendChild(el("div",{class:"eventDateHeroTime"},[timeText]));
 
-const ll = (evt && (evt. lng:+evt.
+const ll = (evt && (evt.location_lat!=null || evt.location_lng!=null)) ? {lat:+evt.location_lat, lng:+evt.location_lng} : null;
 if(evt?.location){
   const row = el("div",{class:"eventDateHeroLoc"},[evt.location]);
   // One-tap maps
@@ -1359,7 +1338,7 @@ function isProductionDocsTypeErr(err){
   return /invalid input syntax/i.test(msg) || /JSON/i.test(msg) || /cannot cast/i.test(msg);
 }
 function isMissingLocationLatLngColumnsErr(err){
-  return isMissingColumnNamed(err, " "
+  return isMissingColumnNamed(err, "location_lat") || isMissingColumnNamed(err, "location_lng");
 }
 function _stripAudit(obj){
   const o = {...obj};
@@ -3487,8 +3466,6 @@ async function openEventModal(existing=null){
           start_at: s.toISOString(),
           end_at: en.toISOString(),
           location: loc.value.trim(),
-          
-          
           notes: notes.value.trim(),
           production_docs: productionDocs,
           updated_at: nowIso
@@ -3519,8 +3496,8 @@ async function openEventModal(existing=null){
             }catch(e){
               if(isMissingLocationLatLngColumnsErr(e)){
                 const rowNoLL = { ...row };
-                delete rowNoLL.
-                delete rowNoLL.
+                delete rowNoLL.location_lat;
+                delete rowNoLL.location_lng;
                 obj = await sbUpdate("events", existing.id, rowNoLL);
               }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
@@ -3539,10 +3516,7 @@ async function openEventModal(existing=null){
               .update({ start_at: row.start_at, end_at: row.end_at })
               .eq("event_id", existing.id)
               .eq("status","ACTIVE");
-            if(upErr) throw upErr;
-
-            try{ storeEventLatLng(existing.id, row. row. }catch(_e){}
-            toast("Updated event.");
+            if(upErr) throw upErr;            toast("Updated event.");
           } else {
             row.created_at = nowIso;
             row.status = "DRAFT";
@@ -3553,8 +3527,8 @@ async function openEventModal(existing=null){
             }catch(e){
               if(isMissingLocationLatLngColumnsErr(e)){
                 const rowNoLL = { ...row };
-                delete rowNoLL.
-                delete rowNoLL.
+                delete rowNoLL.location_lat;
+                delete rowNoLL.location_lng;
                 obj = await sbInsertAudit("events", rowNoLL);
               }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
@@ -3565,9 +3539,7 @@ async function openEventModal(existing=null){
               }else{
                 throw e;
               }
-            }
-            try{ storeEventLatLng(obj.id, row. row. }catch(_e){}
-            toast("Created event.");
+            }            toast("Created event.");
           }
           m.close();
           location.hash = `#events/${obj.id}`;
