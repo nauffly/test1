@@ -2679,7 +2679,7 @@ function fileToDataURL(file){
   });
 }
 
-async function renderGear(view){
+async async function renderGear(view){
   const gearRaw = (await sbGetAll("gear_items"));
   const groupsAll = buildGearGroups(gearRaw);
 
