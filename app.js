@@ -321,7 +321,7 @@ function storeEventLatLng(eventId, lat, lng){
     localStorage.setItem(__eventLocKey(eventId), JSON.stringify({lat:+lat, lng:+lng, ts:Date.now()}));
   }catch(_e){}
 }
-function loadEventLatLng(eventId){
+function null{
   try{
     const raw = localStorage.getItem(__eventLocKey(eventId));
     if(!raw) return null;
@@ -747,7 +747,7 @@ function renderEventDateHero(evt){
   body.appendChild(el("div",{class:"eventDateHeroDate"},[dateText]));
   if(timeText) body.appendChild(el("div",{class:"eventDateHeroTime"},[timeText]));
 
-const ll = (evt && (evt.location_lat!=null || evt.location_lng!=null)) ? {lat:+evt.location_lat, lng:+evt.location_lng} : loadEventLatLng(evt?.id);
+const ll = (evt && (evt. lng:+evt.
 if(evt?.location){
   const row = el("div",{class:"eventDateHeroLoc"},[evt.location]);
   // One-tap maps
@@ -1359,7 +1359,7 @@ function isProductionDocsTypeErr(err){
   return /invalid input syntax/i.test(msg) || /JSON/i.test(msg) || /cannot cast/i.test(msg);
 }
 function isMissingLocationLatLngColumnsErr(err){
-  return isMissingColumnNamed(err, "location_lat") || isMissingColumnNamed(err, "location_lng");
+  return isMissingColumnNamed(err, " "
 }
 function _stripAudit(obj){
   const o = {...obj};
@@ -3487,8 +3487,8 @@ async function openEventModal(existing=null){
           start_at: s.toISOString(),
           end_at: en.toISOString(),
           location: loc.value.trim(),
-          location_lat: (loc.__locLat!=null ? +loc.__locLat : null),
-          location_lng: (loc.__locLng!=null ? +loc.__locLng : null),
+          
+          
           notes: notes.value.trim(),
           production_docs: productionDocs,
           updated_at: nowIso
@@ -3519,8 +3519,8 @@ async function openEventModal(existing=null){
             }catch(e){
               if(isMissingLocationLatLngColumnsErr(e)){
                 const rowNoLL = { ...row };
-                delete rowNoLL.location_lat;
-                delete rowNoLL.location_lng;
+                delete rowNoLL.
+                delete rowNoLL.
                 obj = await sbUpdate("events", existing.id, rowNoLL);
               }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
@@ -3541,7 +3541,7 @@ async function openEventModal(existing=null){
               .eq("status","ACTIVE");
             if(upErr) throw upErr;
 
-            try{ storeEventLatLng(existing.id, row.location_lat, row.location_lng); }catch(_e){}
+            try{ storeEventLatLng(existing.id, row. row. }catch(_e){}
             toast("Updated event.");
           } else {
             row.created_at = nowIso;
@@ -3553,8 +3553,8 @@ async function openEventModal(existing=null){
             }catch(e){
               if(isMissingLocationLatLngColumnsErr(e)){
                 const rowNoLL = { ...row };
-                delete rowNoLL.location_lat;
-                delete rowNoLL.location_lng;
+                delete rowNoLL.
+                delete rowNoLL.
                 obj = await sbInsertAudit("events", rowNoLL);
               }else if(isMissingProductionDocsColumnErr(e)){
                 const rowNoDocs = { ...row };
@@ -3566,7 +3566,7 @@ async function openEventModal(existing=null){
                 throw e;
               }
             }
-            try{ storeEventLatLng(obj.id, row.location_lat, row.location_lng); }catch(_e){}
+            try{ storeEventLatLng(obj.id, row. row. }catch(_e){}
             toast("Created event.");
           }
           m.close();
