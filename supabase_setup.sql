@@ -30,10 +30,33 @@ create table if not exists public.events (
   end_at timestamptz not null,
   location text default '',
   notes text default '',
+  production_docs jsonb not null default '[]'::jsonb,
+  assigned_people jsonb not null default '[]'::jsonb,
   status text not null default 'DRAFT',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.events add column if not exists production_docs jsonb not null default '[]'::jsonb;
+alter table public.events add column if not exists assigned_people jsonb not null default '[]'::jsonb;
+
+
+-- TEAM MEMBERS
+create table if not exists public.team_members (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid,
+  name text not null,
+  title text default '',
+  default_role text default '',
+  phone text default '',
+  email text default '',
+  image_url text default '',
+  notes text default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.team_members add column if not exists workspace_id uuid;
+alter table public.team_members add column if not exists image_url text default '';
 
 -- KITS
 create table if not exists public.kits (
@@ -80,6 +103,7 @@ alter table public.events enable row level security;
 alter table public.kits enable row level security;
 alter table public.reservations enable row level security;
 alter table public.checkouts enable row level security;
+alter table public.team_members enable row level security;
 
 -- Allow any authenticated user to read/write
 do $$ begin
@@ -115,4 +139,11 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 do $$ begin
   create policy "auth_write_checkouts" on public.checkouts for all to authenticated using (true) with check (true);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create policy "auth_select_team_members" on public.team_members for select to authenticated using (true);
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create policy "auth_write_team_members" on public.team_members for all to authenticated using (true) with check (true);
 exception when duplicate_object then null; end $$;
