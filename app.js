@@ -3571,7 +3571,8 @@ async function openTeamMemberModal(existing=null){
   const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
   const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
   const website = el("input",{class:"input", placeholder:"Website (optional)", value: existing?.website || ""});
-  const instagram = el("input",{class:"input", placeholder:"Instagram (optional)", value: existing?.instagram || ""});
+  const headshotFile = el("input",{type:"file", accept:"image/*", class:"input"});
+  const headshotHint = el("div",{class:"small muted"},["Paste a URL or upload an image."]);
 
   const notes = el("textarea",{class:"textarea", placeholder:"Notes (rates, availability, address, etc.)"});
   notes.value = existing?.notes || "";
@@ -3587,6 +3588,18 @@ async function openTeamMemberModal(existing=null){
     }
   };
   headshotUrl.addEventListener("input", repaintPreview);
+  headshotFile.addEventListener("change", async ()=>{
+    const f = headshotFile.files?.[0];
+    if(!f) return;
+    try{
+      headshotUrl.value = await fileToDataURL(f);
+      headshotHint.textContent = "Headshot selected (stored as data URL).";
+      repaintPreview();
+    }catch(err){
+      console.error(err);
+      toast("Could not read that image file.");
+    }
+  });
   name.addEventListener("input", repaintPreview);
   repaintPreview();
 
@@ -3601,6 +3614,7 @@ async function openTeamMemberModal(existing=null){
       preview,
       el("div",{class:"stack", style:"flex:1; gap:10px"},[
         el("div",{},[el("label",{class:"small muted"},["Headshot URL"]), headshotUrl]),
+        el("div",{},[el("label",{class:"small muted"},["Upload headshot"]), headshotFile, headshotHint]),
         el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
           el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
           el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
@@ -3608,7 +3622,6 @@ async function openTeamMemberModal(existing=null){
           el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
           el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
           el("div",{},[el("label",{class:"small muted"},["Website"]), website]),
-          el("div",{},[el("label",{class:"small muted"},["Instagram"]), instagram]),
         ])
       ])
     ]),
@@ -3630,7 +3643,6 @@ async function openTeamMemberModal(existing=null){
           phone: phone.value.trim(),
           email: email.value.trim(),
           website: website.value.trim(),
-          instagram: instagram.value.trim(),
           notes: notes.value.trim(),
           updated_at: nowIso
         };
