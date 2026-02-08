@@ -881,14 +881,14 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
     overflow: auto !important;
   }
 
-  .card .grid{ grid-template-columns: 1fr !important; }
-  .card .grid[style]{ grid-template-columns: 1fr !important; }
-  .card div[style*="grid-template-columns"]{
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card .grid{ grid-template-columns: 1fr !important; }
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card .grid[style]{ grid-template-columns: 1fr !important; }
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card div[style*="grid-template-columns"]{
     display: grid !important;
     grid-template-columns: 1fr !important;
   }
 
-  .card .row{
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row{
     flex-wrap: wrap !important;
     gap: 10px !important;
   }
@@ -899,8 +899,8 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
     width: 100% !important;
   }
 
-  .card .row[style*="justify-content:flex-end"],
-  .card .row[style*="justify-content:space-between"]{
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row[style*="justify-content:flex-end"],
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row[style*="justify-content:space-between"]{
     flex-wrap: wrap !important;
   }
   .card .btn{ width: auto; }
