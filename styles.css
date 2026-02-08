@@ -901,3 +901,105 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   }
   .card .btn{ width: auto; }
 }
+
+
+/* ===== Team cards: vertical playing-card style with round avatar (matches Events) ===== */
+.teamCardsGrid{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap:14px;
+}
+@media (min-width: 920px){
+  .teamCardsGrid{ grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+}
+
+/* Override earlier banner-style team cards */
+.card.teamProfileCard{
+  padding:14px;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  gap:10px;
+}
+.card.teamProfileCard:hover{
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Round avatar */
+.teamProfileHeadshot{
+  width:72px;
+  height:72px;
+  border-radius:999px;
+  overflow:hidden;
+  border:1px solid var(--border);
+  background: var(--panel);
+  flex:0 0 auto;
+  margin-top:2px;
+}
+
+/* Initial inside avatar */
+.teamProfileInitial{
+  width:100%;
+  height:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-weight:900;
+  font-size:18px;
+}
+
+.teamProfileInfo{
+  width:100%;
+  min-width:0;
+  align-items:center;
+  text-align:center;
+  padding:0;
+  gap:6px;
+}
+
+.teamProfileName{
+  font-weight:900;
+  width:100%;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.teamContactRow{
+  width:100%;
+  justify-content:center;
+  gap:10px;
+  margin-top:2px;
+}
+
+.teamContactBtn{
+  width:100%;
+  justify-content:center;
+  padding:9px 12px;
+  font-size:13px;
+}
+
+/* Actions pinned to bottom */
+.teamProfileActions{
+  width:100%;
+  display:flex;
+  margin-top:auto;
+  padding-top:10px;
+  border-top:1px solid var(--border);
+  justify-content:center;
+  background: transparent;
+}
+.teamProfileActions .btn{
+  width:100%;
+}
+
+/* Mobile: keep them card-like and tappable */
+@media (max-width: 560px){
+  .teamCardsGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap:12px; }
+  .card.teamProfileCard{ padding:12px; }
+  .teamProfileHeadshot{ width:64px; height:64px; }
+  .teamContactRow{ flex-direction:column; gap:8px; }
+}
