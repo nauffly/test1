@@ -3526,7 +3526,7 @@ async function renderTeam(view){
     el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal()},["Add person"])
   ]));
 
-  const list = el("div",{class:"grid two"});
+  const list = el("div",{class:"grid two teamCardsGrid"});
   view.appendChild(list);
 
   if(members === null){
