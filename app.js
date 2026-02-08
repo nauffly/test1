@@ -56,87 +56,30 @@ async function gearItemInUse(gearItemId){
       if(["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st)) continue;
       return true;
     }
+
     const cos = await sbGetAll("checkouts");
     for(const c of cos){
-      if(String(c.status||"").toUpperCase() !== "OPEN") continue;
-      if((c.items||[]).includes(gearItemId)) return true;
+      const st = String(c.status||"").toUpperCase();
+      if(["CANCELED","CANCELLED","RETURNED","CLOSED"].includes(st)) continue;
+
+      // checkouts.items can be array of ids or objects; also tolerate JSON-string
+      const items = (typeof parseJsonArray === "function")
+        ? parseJsonArray(c.items)
+        : (Array.isArray(c.items) ? c.items : []);
+      for(const it of items){
+        if(it === gearItemId) return true;
+        if(it && typeof it === "object"){
+          if(it.gear_item_id === gearItemId) return true;
+          if(it.id === gearItemId) return true;
+        }
+      }
     }
   }catch(e){
-    console.warn(e);
+    // ignore
   }
   return false;
 }
 
-function dateOverlaps(aStart, aEnd, bStart, bEnd){
-  const as = new Date(aStart).getTime();
-  const ae = new Date(aEnd).getTime();
-  const bs = new Date(bStart).getTime();
-  const be = new Date(bEnd).getTime();
-  return as <= be && ae >= bs;
-}
-
-function fmtDate(d){
-  try{
-    const dt = new Date(d + "T00:00:00");
-    return dt.toLocaleDateString();
-  }catch(_){ return d; }
-}
-
-function normalizeScanText(v){
-  return String(v || "").trim().toLowerCase();
-}
-function parseJsonArray(value){
-  if(Array.isArray(value)) return value;
-  if(!value) return [];
-  if(typeof value === "string") {
-    try{
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    }catch(_){ return []; }
-  }
-  return [];
-}
-
-function isProductionDocsTypeErr(err){
-  const msg = String(err?.message || err || "").toLowerCase();
-  // Covers: column is text but expression is json/jsonb, invalid json, etc.
-  return msg.includes("production_docs") && (
-    msg.includes("type text") ||
-    msg.includes("invalid input syntax") ||
-    msg.includes("cannot cast") ||
-    msg.includes("json")
-  );
-}
-
-
-function isMissingProductionDocsColumnErr(err){
-  const msg = String(err?.message || err || "").toLowerCase();
-  // Covers: "Could not find the 'production_docs' column of 'events' in the schema cache"
-  return msg.includes("production_docs") && (
-    msg.includes("could not find") ||
-    msg.includes("schema cache") ||
-    msg.includes("does not exist") ||
-    msg.includes("unknown column") ||
-    msg.includes("column") && msg.includes("not")
-  );
-}
-
-
-
-function findGearByScan(gearItems, rawValue){
-  const normalized = normalizeScanText(rawValue);
-  if(!normalized) return null;
-
-  return (gearItems || []).find(g=>{
-    const base = normalizeScanText(baseName(g.name));
-    const full = normalizeScanText(g.name);
-    const id = normalizeScanText(g.id);
-    const tag = normalizeScanText(g.asset_tag);
-    const serial = normalizeScanText(g.serial);
-    const qrCode = normalizeScanText(g.qr_code);
-    return normalized===id || normalized===tag || normalized===serial || normalized===qrCode || normalized===full || normalized===base;
-  }) || null;
-}
 
 async function openQrScannerModal({ title="Scan QR", onDetect }){
   const hasBarcodeDetector = typeof window.BarcodeDetector !== "undefined";
@@ -2679,7 +2622,7 @@ function fileToDataURL(file){
   });
 }
 
-async async function renderGear(view){
+async function renderGear(view){
   const gearRaw = (await sbGetAll("gear_items"));
   const groupsAll = buildGearGroups(gearRaw);
 
@@ -2863,7 +2806,7 @@ async function openGearModal(existingGroup=null){
           console.error(err);
           toast(err.message || "Delete failed.");
         }
-      }},["Delete"]), : el("span",{},[])),
+      }},["Delete"]) : null),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
@@ -3167,7 +3110,7 @@ async function openEventModal(existing=null){
           console.error(err);
           toast(err.message || "Delete failed.");
         }
-      }},["Delete"]), : el("span",{},[])),
+      }},["Delete"]) : null),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
@@ -4266,7 +4209,7 @@ async function openKitModal(existing=null){
           console.error(err);
           toast(err.message || "Delete failed.");
         }
-      }},["Delete"]), : el("span",{},[])),
+      }},["Delete"]) : null),
       el("button",{class:"btn secondary", onClick:(e)=>{e.preventDefault(); m.close();}},["Cancel"]),
       el("button",{class:"btn", onClick: async (e)=>{
         e.preventDefault();
