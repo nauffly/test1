@@ -363,6 +363,49 @@ function setupHeaderUX(){
     document.head.appendChild(st);
   }
 
+
+  // Event date hero styles (Google Calendar-like)
+  if(!document.querySelector("#javiEventDateHeroStyles")){
+    const st2 = document.createElement("style");
+    st2.id="javiEventDateHeroStyles";
+    st2.textContent = `
+      .eventDateHero{
+        display:flex;
+        gap:12px;
+        align-items:flex-start;
+        padding:14px 14px;
+        border:1px solid var(--border);
+        border-radius:16px;
+        background: color-mix(in srgb, var(--card) 96%, transparent);
+        box-shadow: var(--shadowSoft, 0 10px 26px rgba(0,0,0,.08));
+        margin-top:10px;
+      }
+      .eventDateHeroIcon{
+        font-size:20px;
+        line-height:1;
+        margin-top:2px;
+      }
+      .eventDateHeroDate{
+        font-size:18px;
+        font-weight:800;
+        letter-spacing:-0.01em;
+      }
+      .eventDateHeroTime{
+        font-size:14px;
+        margin-top:4px;
+      }
+      .eventDateHeroLoc{
+        font-size:13px;
+        margin-top:4px;
+        color: var(--muted);
+      }
+      @media (max-width: 520px){
+        .eventDateHero{ padding:12px 12px; }
+        .eventDateHeroDate{ font-size:17px; }
+      }
+    `;
+    document.head.appendChild(st2);
+  }
   // Also force-show on small screens via JS (in case CSS/media query is weird)
   try{
     const mq = window.matchMedia("(max-width: 900px)");
@@ -394,6 +437,40 @@ function fmt(dt){
   const d = (dt instanceof Date) ? dt : new Date(dt);
   return new Intl.DateTimeFormat(undefined, {dateStyle:"medium", timeStyle:"short"}).format(d);
 }
+
+function fmtDateLong(dt){
+  const d = (dt instanceof Date) ? dt : new Date(dt);
+  return new Intl.DateTimeFormat(undefined, {weekday:"short", month:"short", day:"numeric", year:"numeric"}).format(d);
+}
+function fmtTime(dt){
+  const d = (dt instanceof Date) ? dt : new Date(dt);
+  return new Intl.DateTimeFormat(undefined, {timeStyle:"short"}).format(d);
+}
+function renderEventDateHero(evt){
+  const start = evt?.start_at ? new Date(evt.start_at) : null;
+  const end = evt?.end_at ? new Date(evt.end_at) : null;
+  const dateText = start ? fmtDateLong(start) : "Date TBD";
+  let timeText = "";
+  if(start && end){
+    const sameDay = start.toDateString() === end.toDateString();
+    if(sameDay){
+      timeText = `${fmtTime(start)} → ${fmtTime(end)}`;
+    } else {
+      timeText = `${fmt(start)} → ${fmt(end)}`;
+    }
+  } else if(start){
+    timeText = fmtTime(start);
+  }
+  const wrap = el("div",{class:"eventDateHero"});
+  wrap.appendChild(el("div",{class:"eventDateHeroIcon", "aria-hidden":"true"},["📅"]));
+  const body = el("div",{style:"flex:1"});
+  body.appendChild(el("div",{class:"eventDateHeroDate"},[dateText]));
+  if(timeText) body.appendChild(el("div",{class:"eventDateHeroTime"},[timeText]));
+  if(evt?.location) body.appendChild(el("div",{class:"eventDateHeroLoc"},[evt.location]));
+  wrap.appendChild(body);
+  return wrap;
+}
+
 
 /* ===== Dashboard Calendar (Day / Week / Month) ===== */
 const CAL_LS_VIEW_KEY = "javi_dash_cal_view";
@@ -3108,7 +3185,7 @@ async function renderEventDetail(view, evt){
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
       el("h1",{},[evt.title]),
-      el("div",{class:"muted small"},[`${fmt(evt.start_at)} → ${fmt(evt.end_at)} • ${evt.location || "No location"}`]),
+      renderEventDateHero(evt),
       (evt.created_by_email ? el("div",{class:"small muted"},[`Created by ${evt.created_by_email}`]) : null),
       (evt.closed_by_email ? el("div",{class:"small muted"},[`Closed by ${evt.closed_by_email}`]) : null),
     ]),
