@@ -1038,3 +1038,107 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
 }
 .ghostSubtitle{ margin-top:6px; }
 .ghostCta{ margin-top:12px; }
+/* === Event Date Hero (Google Calendar–style) === */
+.eventDateHeroCal{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  padding:16px 16px;
+}
+
+.eventDateLeft{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex:0 0 auto;
+}
+
+.eventDateBadge{
+  width:62px;
+  min-width:62px;
+  height:72px;
+  border-radius:16px;
+  border:1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  line-height:1;
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 10%, transparent);
+}
+
+.eventDateBadgeMonth{
+  font-size:.72rem;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  opacity:.85;
+}
+
+.eventDateBadgeDay{
+  font-size:1.55rem;
+  font-weight:900;
+  margin-top:4px;
+}
+
+.eventDateBadgeWk{
+  font-size:.72rem;
+  font-weight:700;
+  margin-top:4px;
+  opacity:.7;
+}
+
+.eventDateBadgeArrow{
+  font-size:1.15rem;
+  font-weight:900;
+  opacity:.55;
+  margin:0 2px;
+}
+
+.eventDateInfo{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:0;
+}
+
+.eventDateTitle{
+  font-size:1.05rem;
+  font-weight:900;
+  letter-spacing:.2px;
+}
+
+.eventDateRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:.95rem;
+  font-weight:650;
+  opacity:.9;
+}
+
+.eventDateIcon{
+  width:20px;
+  text-align:center;
+  opacity:.85;
+}
+
+.eventDateText{
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* Mobile: keep it clean + compact */
+@media (max-width: 520px){
+  .eventDateHeroCal{
+    align-items:flex-start;
+  }
+  .eventDateTitle{
+    font-size:1rem;
+  }
+  .eventDateRow{
+    font-size:.9rem;
+  }
+}
