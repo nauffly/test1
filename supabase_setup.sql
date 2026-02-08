@@ -50,13 +50,11 @@ create table if not exists public.team_members (
   default_role text default '',
   phone text default '',
   email text default '',
-  image_url text default '',
   notes text default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 alter table public.team_members add column if not exists workspace_id uuid;
-alter table public.team_members add column if not exists image_url text default '';
 
 -- KITS
 create table if not exists public.kits (
