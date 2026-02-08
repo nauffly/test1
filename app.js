@@ -659,6 +659,7 @@ const state = {
 
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
   inviteJoinError: null,
+  teamTableNoWorkspaceColumn: false,
 };
 
 
