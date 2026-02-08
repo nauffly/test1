@@ -1210,29 +1210,41 @@ async function fetchMyWorkspaces(){
 
 
 async function canCreateAnotherWorkspace(){
-  // Hard limit: 1 workspace per user.
-  // Prefer an authoritative check against workspaces.created_by (if RLS allows).
-  try{
-    const {count, error} = await supabase
-      .from("workspaces")
-      .select("id", { count:"exact", head:true })
-      .eq("created_by", state.user.id);
+  // Hard limit: 1 owned workspace per user.
+  // Different DB versions used different owner columns; try a few.
+  const ownerCols = ["owner_id", "created_by", "user_id"];
 
-    if(!error && typeof count === "number"){
-      return count < 1;
-    }
-  }catch(_){}
+  for(const col of ownerCols){
+    try{
+      const {data, error} = await supabase
+        .from("workspaces")
+        .select(`id,${col}`)
+        .eq(col, state.user.id)
+        .limit(1);
 
-  // Fallback: infer ownership via workspace_members role.
+      if(error){
+        if(isMissingColumnErr(error)) continue;
+        // Any other error (incl. RLS), fall through to next strategy
+        continue;
+      }
+      if(Array.isArray(data) && data.length > 0) return false;
+    }catch(_){ /* try next */ }
+  }
+
+  // Fallback: infer ownership via workspace_members role (covers older schemas).
   try{
     const workspaces = await fetchMyWorkspaces();
-    const owned = workspaces.filter(w=>String(w.role||"").toLowerCase()==="owner");
+    const owned = workspaces.filter(w=>{
+      const r = String(w.role||"").toLowerCase();
+      return r === "owner" || r === "admin";
+    });
     return owned.length < 1;
   }catch(_){
     // If we can't verify, default to NOT allowing another workspace.
     return false;
   }
 }
+
 
 
 async function createWorkspaceByName(wsNameRaw){
@@ -1722,6 +1734,39 @@ async function renderWorkspace(view){
     }},["Save workspace name"]);
     inviteBox.appendChild(renameInput);
     inviteBox.appendChild(renameBtn);
+
+    // Danger zone: delete workspace (owner only)
+    inviteBox.appendChild(el("hr",{class:"sep"}));
+    inviteBox.appendChild(el("div",{style:"font-weight:800"},["Danger zone"]));
+    inviteBox.appendChild(el("div",{class:"muted small", style:"margin-top:6px"},[
+      "Delete this workspace and all its data (events, gear, team, kits). This cannot be undone."
+    ]));
+    const delBtn = el("button",{class:"btn danger", style:"margin-top:10px", onClick: async ()=>{
+      try{
+        if(!confirm("Delete this workspace and all its data? This cannot be undone.")) return;
+        const typed = prompt('Type DELETE to confirm:');
+        if(typed !== "DELETE"){ toast("Cancelled."); return; }
+
+        delBtn.disabled = true;
+        delBtn.textContent = "Deleting…";
+        await deleteWorkspaceAndAllData(state.workspaceId);
+
+        // Clear selection and return user to create-workspace flow
+        clearWorkspaceLocalStorage();
+        state.workspaceId = null;
+        state.workspaceName = null;
+        state.workspaceRole = null;
+
+        toast("Workspace deleted.");
+        render();
+      }catch(e){
+        toast(e?.message || String(e));
+      }finally{
+        delBtn.disabled = false;
+        delBtn.textContent = "Delete this workspace";
+      }
+    }},["Delete this workspace"]);
+    inviteBox.appendChild(delBtn);
 
     inviteBox.appendChild(el("hr",{class:"sep"}));
     inviteBox.appendChild(el("div",{style:"font-weight:800"},["Invite users"]));
