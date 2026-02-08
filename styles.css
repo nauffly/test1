@@ -853,39 +853,38 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   .gcalMonthChips{ display:none }
 }
 
-/* ===== Hard overrides for inline grid styles inside modals (touch devices) ===== */
-/* On some mobile WebViews, inline styles + broad .card/.row rules can wreck Team/Event cards.
-   These overrides ONLY apply on coarse pointer devices (phones/tablets) and only to the fixed modal overlay. */
-@media (hover: none) and (pointer: coarse){
+/* ===== Hard overrides for inline grid styles inside modals (Android/phone) ===== */
+@media (max-width: 560px){
   body > div[style*="position:fixed"][style*="z-index:50"]{
     padding:10px !important;
   }
   body > div[style*="position:fixed"][style*="z-index:50"] > .card{
-    width: min(96vw, 560px) !important;
+    width: 96vw !important;
     max-height: 90vh !important;
     overflow: auto !important;
   }
 
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card .grid{ grid-template-columns: 1fr !important; }
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card .grid[style]{ grid-template-columns: 1fr !important; }
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card div[style*="grid-template-columns"]{
+  .card .grid{ grid-template-columns: 1fr !important; }
+  .card .grid[style]{ grid-template-columns: 1fr !important; }
+  .card div[style*="grid-template-columns"]{
     display: grid !important;
     grid-template-columns: 1fr !important;
   }
 
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row{
+  .card .row{
     flex-wrap: wrap !important;
     gap: 10px !important;
   }
 
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card input,
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card select,
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card textarea{
+  .card input,
+  .card select,
+  .card textarea{
     width: 100% !important;
   }
 
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row[style*="justify-content:flex-end"],
-  body > div[style*="position:fixed"][style*="z-index:50"] > .card .row[style*="justify-content:space-between"]{
+  .card .row[style*="justify-content:flex-end"],
+  .card .row[style*="justify-content:space-between"]{
     flex-wrap: wrap !important;
   }
+  .card .btn{ width: auto; }
 }
