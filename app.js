@@ -2878,7 +2878,21 @@ async function openEventModal(existing=null){
               }
             }
 
-            obj = await sbUpdate("events", existing.id, row);
+            // production_docs can be jsonb or plain text depending on older schemas.
+            // Try JSON array-of-objects first; if the backend rejects it, retry as a JSON string.
+            try{
+              obj = await sbUpdate("events", existing.id, row);
+            }catch(err){
+              const msg = String(err?.message || "").toLowerCase();
+              const mentionsDocs = msg.includes("production_docs") || msg.includes("production docs");
+              const typeish = msg.includes("type") || msg.includes("cast") || msg.includes("json") || msg.includes("text") || msg.includes("syntax");
+              if(mentionsDocs && typeish){
+                const row2 = { ...row, production_docs: JSON.stringify(productionDocs) };
+                obj = await sbUpdate("events", existing.id, row2);
+              } else {
+                throw err;
+              }
+            }
 
             // Keep this event's ACTIVE reservations aligned to the new event window
             const {error: upErr} = await supabase
@@ -2894,7 +2908,19 @@ async function openEventModal(existing=null){
             row.status = "DRAFT";
             row.created_by = _currentUser()?.id || null;
             row.created_by_email = _currentUser()?.email || null;
-            obj = await sbInsertAudit("events", row);
+            try{
+              obj = await sbInsertAudit("events", row);
+            }catch(err){
+              const msg = String(err?.message || "").toLowerCase();
+              const mentionsDocs = msg.includes("production_docs") || msg.includes("production docs");
+              const typeish = msg.includes("type") || msg.includes("cast") || msg.includes("json") || msg.includes("text") || msg.includes("syntax");
+              if(mentionsDocs && typeish){
+                const row2 = { ...row, production_docs: JSON.stringify(productionDocs) };
+                obj = await sbInsertAudit("events", row2);
+              } else {
+                throw err;
+              }
+            }
             toast("Created event.");
           }
           m.close();
