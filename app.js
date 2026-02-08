@@ -3508,20 +3508,17 @@ async function renderTeam(view){
   }
 
   for(const m of members){
-    const card = el("div",{class:"card"});
+    const card = el("div",{class:"card teamProfileCard"});
 
-    const top = el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start; gap:12px"},[]);
-    const left = el("div",{class:"row", style:"gap:12px; align-items:flex-start; min-width:0"},[]);
-
-    const imgWrap = el("div",{style:"width:56px; height:56px; border-radius:14px; overflow:hidden; border:1px solid var(--border); flex:0 0 auto; background:color-mix(in srgb, var(--bg) 86%, transparent)"},[]);
+    const imgWrap = el("div",{class:"teamProfileHeadshot"},[]);
     if(m.headshot_url){
       imgWrap.appendChild(el("img",{src:m.headshot_url, alt:m.name||"Headshot", style:"width:100%; height:100%; object-fit:cover"}));
     } else {
-      imgWrap.appendChild(el("div",{class:"muted", style:"width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-weight:800"},[(m.name||"?").slice(0,1).toUpperCase()]));
+      imgWrap.appendChild(el("div",{class:"muted teamProfileInitial"},[(m.name||"?").slice(0,1).toUpperCase()]));
     }
 
-    const info = el("div",{class:"stack", style:"min-width:0"},[
-      el("div",{style:"font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis"},[m.name || "Unnamed"]),
+    const info = el("div",{class:"stack teamProfileInfo"},[
+      el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
       el("div",{class:"muted small"},[m.title || "No title"]),
       el("div",{class:"small muted"},[
         [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
@@ -3532,11 +3529,8 @@ async function renderTeam(view){
       (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
     ]);
 
-    left.appendChild(imgWrap);
-    left.appendChild(info);
-
-    top.appendChild(left);
-    card.appendChild(top);
+    card.appendChild(imgWrap);
+    card.appendChild(info);
 
     if(m.notes){
       card.appendChild(el("div",{class:"small", style:"margin-top:10px; white-space:pre-wrap"},[m.notes]));
