@@ -330,6 +330,9 @@ function loadEventLatLng(eventId){
     return {lat:+o.lat, lng:+o.lng};
   }catch(_e){ return null; }
 }
+// Expose helper globally (prevents "not defined" when called from other scopes)
+try{ window.loadEventLatLng = loadEventLatLng; }catch(_e){}
+
 function mapsSearchUrl({lat,lng, address}){
   const a = String(address||"").trim();
   if(lat!=null && lng!=null && !isNaN(lat) && !isNaN(lng)){
