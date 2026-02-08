@@ -682,6 +682,16 @@ function isRlsDeniedErr(e){
   return msg.includes("row level security") || msg.includes("rls") || msg.includes("permission denied") || msg.includes("not allowed");
 }
 
+async function getTeamMembersSafe({allowMissing=false}={}){
+  try{
+    return await sbGetAll("team_members", "name");
+  }catch(err){
+    const missing = isMissingTableErr(err) || isSchemaCacheErr(err);
+    if(allowMissing && missing) return null;
+    throw err;
+  }
+}
+
 function pickDisplayName(user){
   const md = user?.user_metadata || {};
   const raw = md.display_name || md.name || md.full_name || localStorage.getItem("javi_display_name") || "";
