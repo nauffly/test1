@@ -888,3 +888,42 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   }
   .card .btn{ width: auto; }
 }
+
+/* =========================================================
+   Compatibility fallbacks (older mobile WebViews)
+   - Some Android/iOS WebViews don't support color-mix().
+   - When unsupported, rules using color-mix() are ignored,
+     making cards/buttons look "unstyled" on mobile.
+   ========================================================= */
+@supports not (color: color-mix(in srgb, #000 50%, #fff)) {
+  :root{
+    --surface-1:#f8fafc; /* slate-50 */
+    --surface-2:#f1f5f9; /* slate-100 */
+  }
+  [data-theme="dark"]{
+    --surface-1:#14141f;
+    --surface-2:#1a1a28;
+  }
+
+  /* Core surfaces */
+  .topbar{ background: var(--bg); border-bottom:1px solid var(--border); }
+  .card{ background: var(--panel); border:1px solid var(--border); box-shadow: var(--shadow-sm); }
+  .card:hover{ box-shadow: var(--shadow-md); }
+
+  /* Nav pills */
+  .nav a{ color: var(--text); }
+  .nav a:hover{ background: var(--surface-1); border-color: var(--border); }
+  .nav a.active{ background: var(--surface-2); border-color: var(--border); }
+
+  /* Buttons */
+  .btn{ border-color: var(--border); }
+  .btn.secondary{ border-color: var(--border); }
+  .btn.danger{ border-color: var(--danger); }
+
+  /* Team card footer */
+  .teamProfileActions{ background: var(--surface-1); border-top:1px solid var(--border); }
+
+  /* Avatars */
+  .eventAssigneeChip,
+  .eventAssignedHeadshot{ background: var(--panel); border-color: var(--border); }
+}
