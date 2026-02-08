@@ -1,15 +1,18 @@
-const CACHE_NAME = "javi-supabase-v2";
+const CACHE_NAME = "javi-supabase-v3";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./config.js",
+  "./styles.css?v=20260208",
+  "./app.js?v=20260208",
+  "./config.js?v=20260208",
   "./manifest.webmanifest",
   "./icons/icon.svg"
 ];
 
 const NETWORK_FIRST = new Set([
+  "./",
+  "./index.html",
+  "./styles.css",
   "./app.js",
   "./sw.js",
   "./config.js"
