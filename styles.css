@@ -1004,3 +1004,37 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   .teamProfileHeadshot{ width:64px; height:64px; }
   .teamContactRow{ flex-direction:column; gap:8px; }
 }
+
+
+/* ---------- Empty-state "ghost" onboarding cards ---------- */
+.card.ghostCard{
+  border:2px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  background: var(--surface-1);
+  box-shadow:none;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  min-height:140px;
+}
+.card.ghostCard.isClickable{ cursor:pointer; }
+.card.ghostCard:hover{
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-xs);
+  border-color: color-mix(in srgb, var(--border) 85%, transparent);
+  background: var(--surface-2);
+}
+
+.ghostBody{ align-items:center; }
+.ghostPlus{
+  font-size:34px;
+  font-weight:900;
+  line-height:1;
+  margin-bottom:8px;
+}
+.ghostTitle{
+  font-weight:900;
+  font-size:16px;
+}
+.ghostSubtitle{ margin-top:6px; }
+.ghostCta{ margin-top:12px; }
