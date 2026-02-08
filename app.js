@@ -174,6 +174,26 @@ function el(tag, attrs={}, children=[]){
 }
 
 
+// Parse a JSON array stored either as an array, JSON string, or null.
+// Returns [] on any failure.
+function parseJsonArray(v){
+  try{
+    if(v == null) return [];
+    if(Array.isArray(v)) return v;
+    if(typeof v === "string"){
+      const s = v.trim();
+      if(!s) return [];
+      const parsed = JSON.parse(s);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+    // tolerate PostgREST returning object for jsonb in some edge cases
+    return Array.isArray(v) ? v : [];
+  }catch(_e){
+    return [];
+  }
+}
+
+
 
 // --- Empty-state "ghost" card (onboarding) ---
 function ghostCreateCard({ title, subtitle, ctaLabel, onClick, href }){
@@ -320,6 +340,7 @@ function setupHeaderUX(){
         box-shadow: 0 10px 28px rgba(0,0,0,.06);
         overflow:hidden;
         cursor:pointer;
+        color: var(--text);
       }
       .gearTile:hover{ transform: translateY(-1px); }
       .gearTile:active{ transform: translateY(0px); }
@@ -338,7 +359,9 @@ function setupHeaderUX(){
         background: color-mix(in srgb, var(--panel) 90%, transparent);
       }
       .gearTileBody{ padding:12px; display:flex; flex-direction:column; gap:6px; min-height:92px; }
-      .gearTileTitle{ font-weight:800; line-height:1.15; }
+      .gearTileTitle{ font-weight:800; line-height:1.15; 
+        color: var(--text);
+      }
       .gearTileBadge{
         display:inline-flex;
         align-self:flex-start;
