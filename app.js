@@ -109,6 +109,19 @@ function isProductionDocsTypeErr(err){
 }
 
 
+function isMissingProductionDocsColumnErr(err){
+  const msg = String(err?.message || err || "").toLowerCase();
+  // Covers: "Could not find the 'production_docs' column of 'events' in the schema cache"
+  return msg.includes("production_docs") && (
+    msg.includes("could not find") ||
+    msg.includes("schema cache") ||
+    msg.includes("does not exist") ||
+    msg.includes("unknown column") ||
+    msg.includes("column") && msg.includes("not")
+  );
+}
+
+
 
 function findGearByScan(gearItems, rawValue){
   const normalized = normalizeScanText(rawValue);
@@ -3028,7 +3041,11 @@ async function openEventModal(existing=null){
             try{
               obj = await sbUpdate("events", existing.id, row);
             }catch(e){
-              if(isProductionDocsTypeErr(e)){
+              if(isMissingProductionDocsColumnErr(e)){
+                const rowNoDocs = { ...row };
+                delete rowNoDocs.production_docs;
+                obj = await sbUpdate("events", existing.id, rowNoDocs);
+              }else if(isProductionDocsTypeErr(e)){
                 obj = await sbUpdate("events", existing.id, { ...row, production_docs: JSON.stringify(productionDocs || []) });
               }else{
                 throw e;
@@ -3052,7 +3069,11 @@ async function openEventModal(existing=null){
             try{
               obj = await sbInsertAudit("events", row);
             }catch(e){
-              if(isProductionDocsTypeErr(e)){
+              if(isMissingProductionDocsColumnErr(e)){
+                const rowNoDocs = { ...row };
+                delete rowNoDocs.production_docs;
+                obj = await sbInsertAudit("events", rowNoDocs);
+              }else if(isProductionDocsTypeErr(e)){
                 obj = await sbInsertAudit("events", { ...row, production_docs: JSON.stringify(productionDocs || []) });
               }else{
                 throw e;
@@ -3790,7 +3811,7 @@ async function renderTeam(view){
 
     const info = el("div",{class:"stack teamProfileInfo"},[
       el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
-      el("div",{class:"muted small"},[m.title || "No title"]),
+      el("div",{class:"muted small"},[(m.title || "No title") + (m.company ? " • " + m.company : "")]),
       ((m.phone || m.email) ? el("div",{class:"row teamContactRow"},[
         (m.phone ? el("a",{class:"btn secondary teamContactBtn", href:callHref},["Call"]) : null),
         (m.email ? el("a",{class:"btn secondary teamContactBtn", href:mailHref},["Email"]) : null),
@@ -3814,12 +3835,11 @@ async function openTeamMemberModal(existing=null){
   const headshotUrl = el("input",{class:"input", placeholder:"Headshot URL (optional)", value: existing?.headshot_url || ""});
   const name = el("input",{class:"input", placeholder:"Name", value: existing?.name || ""});
   const title = el("input",{class:"input", placeholder:"Title (e.g., Director, Gaffer, Actor)", value: existing?.title || ""});
-  const defaultRole = el("input",{class:"input", placeholder:"Default role (Crew, Actor, etc.)", value: existing?.default_role || ""});
-
+  const company = el("input",{class:"input", placeholder:"Company (optional)", value: existing?.company || ""});
+  
   const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
   const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
-  const website = el("input",{class:"input", placeholder:"Website (optional)", value: existing?.website || ""});
-  const headshotFile = el("input",{type:"file", accept:"image/*", class:"input"});
+    const headshotFile = el("input",{type:"file", accept:"image/*", class:"input"});
   const headshotHint = el("div",{class:"small muted"},["Paste a URL or upload an image."]);
 
   const notes = el("textarea",{class:"textarea", placeholder:"Notes (rates, availability, address, etc.)"});
@@ -3866,11 +3886,10 @@ async function openTeamMemberModal(existing=null){
         el("div",{class:"grid", style:"grid-template-columns: 1fr 1fr; gap:10px"},[
           el("div",{},[el("label",{class:"small muted"},["Name"]), name]),
           el("div",{},[el("label",{class:"small muted"},["Title"]), title]),
-          el("div",{},[el("label",{class:"small muted"},["Default role"]), defaultRole]),
+          el("div",{},[el("label",{class:"small muted"},["Company"]), company]),
           el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
           el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
-          el("div",{},[el("label",{class:"small muted"},["Website"]), website]),
-        ])
+                  ])
       ])
     ]),
 
@@ -3906,11 +3925,10 @@ async function openTeamMemberModal(existing=null){
           headshot_url: headshotUrl.value.trim() || null,
           name: name.value.trim(),
           title: title.value.trim(),
-          default_role: defaultRole.value.trim(),
-          phone: phone.value.trim(),
+          company: company.value.trim(),
+                    phone: phone.value.trim(),
           email: email.value.trim(),
-          website: website.value.trim(),
-          notes: notes.value.trim(),
+                    notes: notes.value.trim(),
           updated_at: nowIso
         };
 
@@ -3918,8 +3936,7 @@ async function openTeamMemberModal(existing=null){
         const minimalRow = {
           name: fullRow.name,
           title: fullRow.title,
-          default_role: fullRow.default_role,
-          phone: fullRow.phone,
+                    phone: fullRow.phone,
           email: fullRow.email,
           notes: fullRow.notes,
           updated_at: nowIso
