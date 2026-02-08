@@ -3556,24 +3556,20 @@ async function renderTeam(view){
       imgWrap.appendChild(el("div",{class:"muted teamProfileInitial"},[(m.name||"?").slice(0,1).toUpperCase()]));
     }
 
+    const callHref = m.phone ? `tel:${String(m.phone).replace(/[^\d+]/g, "")}` : "";
+    const mailHref = m.email ? `mailto:${String(m.email).trim()}` : "";
+
     const info = el("div",{class:"stack teamProfileInfo"},[
       el("div",{class:"teamProfileName"},[m.name || "Unnamed"]),
       el("div",{class:"muted small"},[m.title || "No title"]),
-      el("div",{class:"small muted"},[
-        [m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"
-      ]),
-      (m.website ? el("div",{class:"small"},[
-        el("a",{href:m.website, target:"_blank", rel:"noopener noreferrer"},["Website"])
-      ]) : null),
-      (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
+      ((m.phone || m.email) ? el("div",{class:"row teamContactRow"},[
+        (m.phone ? el("a",{class:"btn secondary teamContactBtn", href:callHref},["Call"]) : null),
+        (m.email ? el("a",{class:"btn secondary teamContactBtn", href:mailHref},["Email"]) : null),
+      ]) : el("div",{class:"small muted"},["No contact info"]))
     ]);
 
     card.appendChild(imgWrap);
     card.appendChild(info);
-
-    if(m.notes){
-      card.appendChild(el("div",{class:"small", style:"margin-top:10px; white-space:pre-wrap"},[m.notes]));
-    }
 
     card.appendChild(el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
       el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
