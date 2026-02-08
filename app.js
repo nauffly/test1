@@ -1,4 +1,9 @@
 
+// --- mapsSearchUrl helper (address-only, no lat/lng)
+const mapsSearchUrl = (address) =>
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+
+
 var supabase;
 // JAVI_BUILD: 2026-02-07-team-cards-v1
 /**
