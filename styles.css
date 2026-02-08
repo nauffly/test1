@@ -219,10 +219,6 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
 
 /* ---------- Cards (soft hover elevation) ---------- */
 .card{
-  /* Fallbacks for mobile WebViews that don't support color-mix() */
-  border:1px solid var(--border);
-  background: var(--panel);
-
   border:1px solid color-mix(in srgb, var(--border) 85%, transparent);
   border-radius: var(--radius-lg);
   padding:14px;
@@ -253,7 +249,6 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   overflow:hidden;
   border:1px solid var(--border);
   flex:0 0 auto;
-  background: var(--bg);
   background:color-mix(in srgb, var(--bg) 86%, transparent);
 }
 
@@ -318,9 +313,6 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   display:flex;
   justify-content:flex-end;
   padding:10px 14px 14px;
-  border-top:1px solid var(--border);
-  background: var(--bg);
-
   border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent);
   background: color-mix(in srgb, var(--bg) 96%, transparent);
 }
@@ -349,9 +341,6 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   height:28px;
   border-radius:999px;
   overflow:hidden;
-  border:1px solid var(--border);
-  background: var(--panel);
-
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   flex:0 0 auto;
@@ -371,9 +360,6 @@ h2{font-size:16px; margin:0; letter-spacing:-.01em}
   height:40px;
   border-radius:14px;
   overflow:hidden;
-  border:1px solid var(--border);
-  background: var(--panel);
-
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   flex:0 0 auto;
@@ -543,9 +529,6 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   font-size:12px;
   padding:5px 8px;
   border-radius: 12px;
-  border:1px solid var(--border);
-  background: var(--panel);
-
   border:1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   white-space:nowrap;
@@ -870,13 +853,15 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   .gcalMonthChips{ display:none }
 }
 
-/* ===== Hard overrides for inline grid styles inside modals (Android/phone) ===== */
-@media (max-width: 560px){
+/* ===== Hard overrides for inline grid styles inside modals (touch devices) ===== */
+/* On some mobile WebViews, inline styles + broad .card/.row rules can wreck Team/Event cards.
+   These overrides ONLY apply on coarse pointer devices (phones/tablets) and only to the fixed modal overlay. */
+@media (hover: none) and (pointer: coarse){
   body > div[style*="position:fixed"][style*="z-index:50"]{
     padding:10px !important;
   }
   body > div[style*="position:fixed"][style*="z-index:50"] > .card{
-    width: 96vw !important;
+    width: min(96vw, 560px) !important;
     max-height: 90vh !important;
     overflow: auto !important;
   }
@@ -893,9 +878,9 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
     gap: 10px !important;
   }
 
-  .card input,
-  .card select,
-  .card textarea{
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card input,
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card select,
+  body > div[style*="position:fixed"][style*="z-index:50"] > .card textarea{
     width: 100% !important;
   }
 
@@ -903,5 +888,4 @@ hr.sep{border:0; border-top:1px solid color-mix(in srgb, var(--border) 90%, tran
   body > div[style*="position:fixed"][style*="z-index:50"] > .card .row[style*="justify-content:space-between"]{
     flex-wrap: wrap !important;
   }
-  .card .btn{ width: auto; }
 }
