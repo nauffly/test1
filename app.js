@@ -97,24 +97,6 @@ function parseJsonArray(value){
   return [];
 }
 
-function initialsFromName(name){
-  const parts = String(name||"").trim().split(/\s+/).filter(Boolean);
-  if(!parts.length) return "?";
-  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
-  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
-}
-
-function renderPersonAvatar(person, size=56){
-  const url = String(person?.image_url || "").trim();
-  const wrap = el("div",{style:`width:${size}px;height:${size}px;border-radius:999px;overflow:hidden;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, var(--panel) 92%, transparent);flex:0 0 auto;`});
-  if(url){
-    wrap.appendChild(el("img",{src:url, alt:person?.name || "Headshot", style:"width:100%;height:100%;object-fit:cover"}));
-  } else {
-    wrap.appendChild(el("span",{class:"small muted", style:"font-weight:700"},[initialsFromName(person?.name)]));
-  }
-  return wrap;
-}
-
 
 function findGearByScan(gearItems, rawValue){
   const normalized = normalizeScanText(rawValue);
@@ -678,7 +660,6 @@ const state = {
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
   inviteJoinError: null,
   teamTableNoWorkspaceColumn: false,
-  teamStorageMode: "remote", // "remote" (supabase) or "local" fallback
 };
 
 
@@ -702,90 +683,14 @@ function isRlsDeniedErr(e){
   return msg.includes("row level security") || msg.includes("rls") || msg.includes("permission denied") || msg.includes("not allowed");
 }
 
-function teamLocalStorageKey(){
-  const wid = state.workspaceId || "global";
-  return `javi_team_members_${wid}`;
-}
-function readTeamMembersLocal(){
-  try{
-    const raw = localStorage.getItem(teamLocalStorageKey());
-    const arr = parseJsonArray(raw);
-    return arr.filter(x=>x && typeof x==="object");
-  }catch(_){ return []; }
-}
-function writeTeamMembersLocal(rows){
-  localStorage.setItem(teamLocalStorageKey(), JSON.stringify(rows||[]));
-}
-function genId(){
-  try{ if(crypto?.randomUUID) return crypto.randomUUID(); }catch(_){ }
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2,9)}`;
-}
-
 async function getTeamMembersSafe({allowMissing=false}={}){
   try{
-    state.teamTableNoWorkspaceColumn = false;
-    const rows = await sbGetAll("team_members", "name");
-    state.teamStorageMode = "remote";
-    return rows;
+    return await sbGetAll("team_members", "name");
   }catch(err){
-    const msg = _errMsg(err);
-    const canFallback = isMissingTableErr(err) || isSchemaCacheErr(err) || (isMissingColumnErr(err) && /workspace_id/i.test(msg)) || isRlsDeniedErr(err);
-    if(!canFallback) throw err;
-
-    if(isMissingColumnErr(err) && /workspace_id/i.test(msg)) state.teamTableNoWorkspaceColumn = true;
-    state.teamStorageMode = "local";
-    const rows = readTeamMembersLocal().sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-    return rows;
+    const missing = isMissingTableErr(err) || isSchemaCacheErr(err);
+    if(allowMissing && missing) return null;
+    throw err;
   }
-}
-
-async function upsertTeamMemberSafe(existingId, row){
-  if(state.teamStorageMode === "local"){
-    const rows = readTeamMembersLocal();
-    if(existingId){
-      const idx = rows.findIndex(x=>x.id===existingId);
-      if(idx>=0) rows[idx] = {...rows[idx], ...row, id: existingId};
-      else rows.push({...row, id: existingId});
-      writeTeamMembersLocal(rows);
-      return rows.find(x=>x.id===existingId) || null;
-    }
-    const id = genId();
-    const created = {...row, id};
-    rows.push(created);
-    writeTeamMembersLocal(rows);
-    return created;
-  }
-
-  if(state.teamTableNoWorkspaceColumn){
-    const payload = {...row};
-    delete payload.workspace_id;
-    if(existingId){
-      const {data, error} = await supabase.from("team_members").update(payload).eq("id", existingId).select("*").single();
-      if(error) throw error;
-      return data;
-    }
-    const {data, error} = await supabase.from("team_members").insert(payload).select("*").single();
-    if(error) throw error;
-    return data;
-  }
-
-  if(existingId) return await sbUpdate("team_members", existingId, row);
-  return await sbInsert("team_members", row);
-}
-
-async function deleteTeamMemberSafe(id){
-  if(state.teamStorageMode === "local"){
-    const rows = readTeamMembersLocal().filter(x=>x.id!==id);
-    writeTeamMembersLocal(rows);
-    return;
-  }
-
-  if(state.teamTableNoWorkspaceColumn){
-    const {error} = await supabase.from("team_members").delete().eq("id", id);
-    if(error) throw error;
-    return;
-  }
-  await sbDelete("team_members", id);
 }
 
 function pickDisplayName(user){
@@ -2880,7 +2785,7 @@ async function openEventModal(existing=null){
 async function renderEventDetail(view, evt){
   const gear = await sbGetAll("gear_items");
   const kits = await sbGetAll("kits");
-  const teamMembers = (await getTeamMembersSafe({allowMissing:true})) || [];
+  const teamMembers = await sbGetAll("team_members", "name");
   const gearById = Object.fromEntries(gear.map(g=>[g.id,g]));
   const teamById = Object.fromEntries(teamMembers.map(t=>[t.id,t]));
   const eventAssignments = parseJsonArray(evt.assigned_people);
@@ -3300,14 +3205,11 @@ async function renderEventDetail(view, evt){
     for(const a of eventAssignments){
       const tm = teamById[a.person_id];
       list.appendChild(el("div",{class:"listItem"},[
-        el("div",{class:"row", style:"gap:10px; align-items:center"},[
-          renderPersonAvatar(tm || {name:"Unknown person"}, 42),
-          el("div",{class:"stack"},[
-            el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
-            el("div",{class:"kv"},[a.event_role || "No event role"]),
-            (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
-            ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
-          ])
+        el("div",{class:"stack"},[
+          el("div",{style:"font-weight:700"},[tm?.name || "Unknown person"]),
+          el("div",{class:"kv"},[a.event_role || "No event role"]),
+          (tm?.title ? el("div",{class:"small muted"},[tm.title]) : null),
+          ((tm?.phone || tm?.email) ? el("div",{class:"small muted"},[[tm?.phone, tm?.email].filter(Boolean).join(" • ")]) : null)
         ]),
         el("button",{class:"btn secondary", onClick: async ()=>{
           const next = eventAssignments.filter(x=>x.person_id!==a.person_id);
@@ -3504,16 +3406,7 @@ async function renderKits(view){
 
 
 async function renderTeam(view){
-  let membersRaw;
-  try{
-    membersRaw = await getTeamMembersSafe({allowMissing:true});
-  }catch(err){
-    view.appendChild(el("div",{class:"card"},[
-      el("h2",{},["Team unavailable"]),
-      el("div",{class:"small muted", style:"margin-top:8px"},[err?.message || String(err)])
-    ]));
-    return;
-  }
+  const members = (await sbGetAll("team_members", "name")).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
 
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
@@ -3526,13 +3419,6 @@ async function renderTeam(view){
   const list = el("div",{class:"grid two"});
   view.appendChild(list);
 
-  if(state.teamStorageMode === "local"){
-    view.appendChild(el("div",{class:"card", style:"margin-bottom:12px"},[
-      el("div",{class:"small muted"},["Team is running in local fallback mode on this device (not synced)."])
-    ]));
-  }
-
-  const members = (membersRaw || []).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   if(!members.length){
     list.appendChild(el("div",{class:"card"},["No team members yet."]));
     return;
@@ -3540,15 +3426,12 @@ async function renderTeam(view){
 
   for(const m of members){
     const card = el("div",{class:"card"});
-    card.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start; gap:10px"},[
-      el("div",{class:"row", style:"gap:10px; align-items:center"},[
-        renderPersonAvatar(m, 56),
-        el("div",{class:"stack"},[
-          el("div",{style:"font-weight:800"},[m.name || "Unnamed"]),
-          el("div",{class:"muted small"},[m.title || "No title"]),
-          el("div",{class:"small muted"},[[m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"]),
-          (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
-        ])
+    card.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-start"},[
+      el("div",{class:"stack"},[
+        el("div",{style:"font-weight:800"},[m.name || "Unnamed"]),
+        el("div",{class:"muted small"},[m.title || "No title"]),
+        el("div",{class:"small muted"},[[m.phone,m.email].filter(Boolean).join(" • ") || "No contact info"]),
+        (m.default_role ? el("span",{class:"badge"},[m.default_role]) : null)
       ])
     ]));
     if(m.notes){
@@ -3558,16 +3441,7 @@ async function renderTeam(view){
       el("button",{class:"btn secondary", onClick:()=>openTeamMemberModal(m)},["Edit"]),
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm(`Delete ${m.name || "this person"}?`)) return;
-        try{
-          await deleteTeamMemberSafe(m.id);
-        }catch(err){
-          if(isMissingTableErr(err) || isSchemaCacheErr(err)){
-            toast("Team table is missing. Run supabase_setup.sql and refresh.");
-            return;
-          }
-          toast(err.message || String(err));
-          return;
-        }
+        await sbDelete("team_members", m.id);
         const events = await sbGetAll("events");
         for(const evt of events){
           const assignments = parseJsonArray(evt.assigned_people);
@@ -3591,7 +3465,6 @@ async function openTeamMemberModal(existing=null){
   const defaultRole = el("input",{class:"input", placeholder:"Default role (Crew, Actor, etc.)", value: existing?.default_role || ""});
   const phone = el("input",{class:"input", placeholder:"Phone", value: existing?.phone || ""});
   const email = el("input",{class:"input", placeholder:"Email", value: existing?.email || ""});
-  const headshotUrl = el("input",{class:"input", placeholder:"Headshot image URL", value: existing?.image_url || ""});
   const notes = el("textarea",{class:"textarea", placeholder:"Notes"});
   notes.value = existing?.notes || "";
 
@@ -3607,7 +3480,6 @@ async function openTeamMemberModal(existing=null){
       el("div",{},[el("label",{class:"small muted"},["Default role"]), defaultRole]),
       el("div",{},[el("label",{class:"small muted"},["Phone"]), phone]),
       el("div",{},[el("label",{class:"small muted"},["Email"]), email]),
-      el("div",{},[el("label",{class:"small muted"},["Headshot URL"]), headshotUrl]),
     ]),
     el("div",{style:"margin-top:10px"},[el("label",{class:"small muted"},["Notes"]), notes]),
     el("div",{class:"row", style:"justify-content:flex-end; margin-top:10px"},[
@@ -3622,26 +3494,16 @@ async function openTeamMemberModal(existing=null){
           default_role: defaultRole.value.trim(),
           phone: phone.value.trim(),
           email: email.value.trim(),
-          image_url: headshotUrl.value.trim(),
           notes: notes.value.trim(),
           updated_at: nowIso
         };
-        try{
-          if(isEdit){
-            await upsertTeamMemberSafe(existing.id, row);
-            toast("Updated person.");
-          } else {
-            row.created_at = nowIso;
-            await upsertTeamMemberSafe(null, row);
-            toast("Added person.");
-          }
-        }catch(err){
-          if(isMissingTableErr(err) || isSchemaCacheErr(err)){
-            toast("Team table is missing. Run supabase_setup.sql and refresh.");
-            return;
-          }
-          toast(err.message || String(err));
-          return;
+        if(isEdit){
+          await sbUpdate("team_members", existing.id, row);
+          toast("Updated person.");
+        } else {
+          row.created_at = nowIso;
+          await sbInsert("team_members", row);
+          toast("Added person.");
         }
         m.close();
         render();
