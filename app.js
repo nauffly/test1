@@ -677,6 +677,7 @@ const state = {
 
   eventsTab: localStorage.getItem("javi_events_tab") || "upcoming",
   inviteJoinError: null,
+  teamTableNoWorkspaceColumn: false,
 };
 
 
@@ -702,12 +703,54 @@ function isRlsDeniedErr(e){
 
 async function getTeamMembersSafe({allowMissing=false}={}){
   try{
+    state.teamTableNoWorkspaceColumn = false;
     return await sbGetAll("team_members", "name");
   }catch(err){
     const missing = isMissingTableErr(err) || isSchemaCacheErr(err);
-    if(allowMissing && missing) return null;
+    if(missing){
+      if(allowMissing) return null;
+      throw err;
+    }
+
+    // Backward compatibility: team_members may exist without workspace_id.
+    if(isMissingColumnErr(err) && /workspace_id/i.test(_errMsg(err))){
+      state.teamTableNoWorkspaceColumn = true;
+      const {data, error} = await supabase.from("team_members").select("*").order("name", {ascending:true});
+      if(error){
+        if(allowMissing && (isMissingTableErr(error) || isSchemaCacheErr(error))) return null;
+        throw error;
+      }
+      return data || [];
+    }
+
     throw err;
   }
+}
+
+async function upsertTeamMemberSafe(existingId, row){
+  if(state.teamTableNoWorkspaceColumn){
+    const payload = {...row};
+    delete payload.workspace_id;
+    if(existingId){
+      const {data, error} = await supabase.from("team_members").update(payload).eq("id", existingId).select("*").single();
+      if(error) throw error;
+      return data;
+    }
+    const {data, error} = await supabase.from("team_members").insert(payload).select("*").single();
+    if(error) throw error;
+    return data;
+  }
+  if(existingId) return await sbUpdate("team_members", existingId, row);
+  return await sbInsert("team_members", row);
+}
+
+async function deleteTeamMemberSafe(id){
+  if(state.teamTableNoWorkspaceColumn){
+    const {error} = await supabase.from("team_members").delete().eq("id", id);
+    if(error) throw error;
+    return;
+  }
+  await sbDelete("team_members", id);
 }
 
 function pickDisplayName(user){
@@ -3426,7 +3469,16 @@ async function renderKits(view){
 
 
 async function renderTeam(view){
-  const membersRaw = await getTeamMembersSafe({allowMissing:true});
+  let membersRaw;
+  try{
+    membersRaw = await getTeamMembersSafe({allowMissing:true});
+  }catch(err){
+    view.appendChild(el("div",{class:"card"},[
+      el("h2",{},["Team unavailable"]),
+      el("div",{class:"small muted", style:"margin-top:8px"},[err?.message || String(err)])
+    ]));
+    return;
+  }
 
   view.appendChild(el("div",{class:"row", style:"justify-content:space-between; align-items:flex-end; margin-bottom:12px"},[
     el("div",{},[
@@ -3476,7 +3528,7 @@ async function renderTeam(view){
       el("button",{class:"btn danger", onClick:async ()=>{
         if(!confirm(`Delete ${m.name || "this person"}?`)) return;
         try{
-          await sbDelete("team_members", m.id);
+          await deleteTeamMemberSafe(m.id);
         }catch(err){
           if(isMissingTableErr(err) || isSchemaCacheErr(err)){
             toast("Team table is missing. Run supabase_setup.sql and refresh.");
@@ -3545,11 +3597,11 @@ async function openTeamMemberModal(existing=null){
         };
         try{
           if(isEdit){
-            await sbUpdate("team_members", existing.id, row);
+            await upsertTeamMemberSafe(existing.id, row);
             toast("Updated person.");
           } else {
             row.created_at = nowIso;
-            await sbInsert("team_members", row);
+            await upsertTeamMemberSafe(null, row);
             toast("Added person.");
           }
         }catch(err){
