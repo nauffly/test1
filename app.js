@@ -283,15 +283,25 @@ async function nominatimSearch(q){
 }
 
 function attachLocationAutocomplete(inputEl){
-  if(!inputEl || inputEl.__locAutoAttached) return;
-  inputEl.__locAutoAttached = true;
+  if(!inputEl) return;
+
+  // If modal content is constructed before it’s mounted into the DOM,
+  // parentElement will be null. Retry a few times.
+  inputEl.__locAutoTries = (inputEl.__locAutoTries||0) + 1;
+  if(inputEl.__locAutoAttached) return;
 
   ensureLocationAutocompleteStyles();
 
-  const wrap = inputEl.parentElement; // we expect input is inside a wrapper we control
-  if(!wrap) return;
-  wrap.classList.add("locAutoWrap");
+  const wrap = inputEl.parentElement;
+  if(!wrap){
+    if(inputEl.__locAutoTries <= 6){
+      setTimeout(()=>attachLocationAutocomplete(inputEl), 50);
+    }
+    return;
+  }
 
+  inputEl.__locAutoAttached = true;
+  wrap.classList.add("locAutoWrap");
   const list = el("div", { class:"locSuggestList" });
   wrap.appendChild(list);
 
@@ -3235,7 +3245,7 @@ async function openEventModal(existing=null){
   const loc=el("input",{class:"input", placeholder:"Location (optional)", value: existing?.location || ""});
   const locWrap=el("div",{},[loc]);
   // Free address suggestions (OpenStreetMap)
-  try{ attachLocationAutocomplete(loc); }catch(_e){}
+  try{ setTimeout(()=>attachLocationAutocomplete(loc), 0); }catch(_e){}
   const notes=el("textarea",{class:"textarea", placeholder:"Notes (optional)"});
   notes.value = existing?.notes || "";
   const docs=el("textarea",{class:"textarea", placeholder:"Production docs (one per line: Label | URL)"});
