@@ -2680,6 +2680,8 @@ async function renderEvents(view){
 
   // ---- Tabs: Upcoming vs Past/Ended ----
   const allEvents = await sbGetAll("events");
+  const teamMembers = await sbGetAll("team_members", "name");
+  const teamById = Object.fromEntries(teamMembers.map(t=>[t.id,t]));
   const now = new Date();
 
   const upcomingEvents = allEvents
@@ -2727,11 +2729,34 @@ async function renderEvents(view){
   }
 
   for(const e of eventsToShow){
+    const assignees = parseJsonArray(e.assigned_people)
+      .map(a=>teamById[a.person_id])
+      .filter(Boolean);
+
+    const assigneeStrip = el("div",{class:"eventAssigneeStrip"},[]);
+    if(assignees.length){
+      for(const tm of assignees.slice(0,4)){
+        const chip = el("div",{class:"eventAssigneeChip", title:tm.name || "Assigned"},[]);
+        if(tm.headshot_url){
+          chip.appendChild(el("img",{src:tm.headshot_url, alt:tm.name || "Headshot", style:"width:100%; height:100%; object-fit:cover"}));
+        } else {
+          chip.appendChild(el("div",{class:"muted eventAssigneeInitial"},[(tm.name||"?").slice(0,1).toUpperCase()]));
+        }
+        assigneeStrip.appendChild(chip);
+      }
+      if(assignees.length > 4){
+        assigneeStrip.appendChild(el("span",{class:"small muted"},[`+${assignees.length-4}`]));
+      }
+    } else {
+      assigneeStrip.appendChild(el("span",{class:"small muted"},["No people assigned"]));
+    }
+
     list.appendChild(el("a",{href:`#events/${e.id}`, class:"listItem"},[
       el("div",{class:"stack"},[
         el("div",{style:"font-weight:700"},[e.title]),
         el("div",{class:"kv"},[`${fmt(e.start_at)} → ${fmt(e.end_at)}`]),
-        el("div",{class:"kv"},[e.location || "No location"])
+        el("div",{class:"kv"},[e.location || "No location"]),
+        assigneeStrip
       ]),
       el("span",{class:"badge"},[e.status||"DRAFT"])
     ]));
